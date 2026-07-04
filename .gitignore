@@ -1,0 +1,17 @@
+/target
+*.pdb
+
+# advisory DB cache — fetched at runtime, no need to track
+.advisory-db/
+
+# Local LLM / IDE context (not for publication)
+# HANDOVER.md
+# AGENTS.md
+# CLAUDE.md
+# .cursor/
+# .claude/
+
+# OS / editor noise
+.DS_Store
+*.swp
+*~

@@ -99,11 +99,7 @@ fn security_points(advisories: &[Advisory]) -> f64 {
 
 fn advisory_points(advisory: &Advisory) -> f64 {
     if let Some(info) = &advisory.metadata.informational {
-        return if info.is_unmaintained() {
-            20.0
-        } else {
-            10.0
-        };
+        return if info.is_unmaintained() { 20.0 } else { 10.0 };
     }
 
     match advisory.severity() {

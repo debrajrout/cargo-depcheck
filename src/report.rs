@@ -181,11 +181,7 @@ fn json_finding(
             meta_map,
             now,
         ),
-        advisories: finding
-            .advisories
-            .iter()
-            .map(advisory_label)
-            .collect(),
+        advisories: finding.advisories.iter().map(advisory_label).collect(),
     }
 }
 
@@ -247,7 +243,13 @@ fn render_finding(
     };
     println!("│{header:<INNER_WIDTH$}│");
 
-    for line in reason_lines(&finding.node, &finding.risk, &finding.advisories, meta_map, now) {
+    for line in reason_lines(
+        &finding.node,
+        &finding.risk,
+        &finding.advisories,
+        meta_map,
+        now,
+    ) {
         let detail = format!("   {line}");
         println!("│{detail:<INNER_WIDTH$}│");
     }

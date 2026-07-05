@@ -90,7 +90,7 @@ pub fn load(manifest_path: Option<&Path>) -> Result<Vec<DependencyNode>> {
             let depth = *depth_map.get(&n.id).unwrap_or(&usize::MAX);
 
             Some(DependencyNode {
-                name: pkg.name.clone(),
+                name: pkg.name.to_string(),
                 version: pkg.version.clone(),
                 is_direct: direct_ids.contains(&n.id),
                 depth,

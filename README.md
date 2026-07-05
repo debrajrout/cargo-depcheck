@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/debrajrout/cargo-depcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/debrajrout/cargo-depcheck/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
-[![MSRV: 1.70](https://img.shields.io/badge/rustc-1.70%2B-orange.svg)](https://blog.rust-lang.org/2023/06/01/Rust-1.70.0.html)
+[![MSRV: 1.91](https://img.shields.io/badge/rustc-1.91%2B-orange.svg)](https://releases.rs/docs/1.91.0/)
 
 **Your dependency tree has 300 crates. You have time for three.**
 
@@ -33,7 +33,7 @@ cargo install --path .
 # or: cargo run -- depcheck --manifest-path /path/to/project/Cargo.toml
 ```
 
-**Needs:** Rust 1.70+, `cargo` on your PATH.
+**Needs:** Rust 1.91+, `cargo` on your PATH.
 
 ---
 

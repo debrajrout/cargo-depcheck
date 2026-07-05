@@ -45,13 +45,13 @@ jobs:
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
   msrv:
-    name: msrv (1.70)
+    name: msrv (1.91)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.70"
+          toolchain: "1.91"
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --all-features --locked
 

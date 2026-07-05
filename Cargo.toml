@@ -2,7 +2,7 @@
 name = "cargo-depcheck"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.91"
 description = "Ranked dependency health report — security advisories, version lag, and maintenance signals weighted by graph depth"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/debrajrout/cargo-depcheck"

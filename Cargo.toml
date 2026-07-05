@@ -43,7 +43,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 
 # Terminal progress bar
-indicatif = "0.17"
+indicatif = "0.18"
 
 # Terminal colors
 colored = "2"

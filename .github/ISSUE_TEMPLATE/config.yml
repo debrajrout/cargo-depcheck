@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Question or discussion
-    url: https://github.com/debarajrout/cargo-depcheck/discussions
+    url: https://github.com/debrajrout/cargo-depcheck/discussions
     about: Ask a question or start a discussion instead of filing an issue.

@@ -1,6 +1,6 @@
 # cargo-depcheck
 
-[![CI](https://github.com/debarajrout/cargo-depcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/debarajrout/cargo-depcheck/actions/workflows/ci.yml)
+[![CI](https://github.com/debrajrout/cargo-depcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/debrajrout/cargo-depcheck/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![MSRV: 1.70](https://img.shields.io/badge/rustc-1.70%2B-orange.svg)](https://blog.rust-lang.org/2023/06/01/Rust-1.70.0.html)
 
@@ -27,7 +27,7 @@ First run needs network (crates.io + RustSec advisory DB). After that, the advis
 **From source:**
 
 ```sh
-git clone https://github.com/debarajrout/cargo-depcheck
+git clone https://github.com/debrajrout/cargo-depcheck
 cd cargo-depcheck
 cargo install --path .
 # or: cargo run -- depcheck --manifest-path /path/to/project/Cargo.toml
@@ -142,11 +142,11 @@ Use **audit** to block merges on known CVEs. Use **depcheck** weekly to decide w
 
 | I want to… | Start here |
 |------------|------------|
-| Report a bug | [Open a bug report](https://github.com/debarajrout/cargo-depcheck/issues/new?template=bug_report.yml) |
-| Suggest a feature | [Open a feature request](https://github.com/debarajrout/cargo-depcheck/issues/new?template=feature_request.yml) |
+| Report a bug | [Open a bug report](https://github.com/debrajrout/cargo-depcheck/issues/new?template=bug_report.yml) |
+| Suggest a feature | [Open a feature request](https://github.com/debrajrout/cargo-depcheck/issues/new?template=feature_request.yml) |
 | Write code | Read [CONTRIBUTING.md](CONTRIBUTING.md) — setup, roles, PR process |
-| Find easy tasks | Issues labeled [`good first issue`](https://github.com/debarajrout/cargo-depcheck/labels/good%20first%20issue) |
-| Ask a question | [GitHub Discussions](https://github.com/debarajrout/cargo-depcheck/discussions) |
+| Find easy tasks | Issues labeled [`good first issue`](https://github.com/debrajrout/cargo-depcheck/labels/good%20first%20issue) |
+| Ask a question | [GitHub Discussions](https://github.com/debrajrout/cargo-depcheck/discussions) |
 
 **Roles:** User → Reporter → Contributor → Triager → Maintainer. You pick where to start; no permission needed to open an issue or PR. Full details in [CONTRIBUTING.md](CONTRIBUTING.md).
 

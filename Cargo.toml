@@ -46,7 +46,7 @@ anyhow = "1"
 indicatif = "0.18"
 
 # Terminal colors
-colored = "2"
+colored = "3"
 
 [profile.release]
 strip = true

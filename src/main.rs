@@ -26,7 +26,10 @@ async fn main() -> Result<()> {
     let ignore: HashSet<String> = args.ignore.into_iter().collect();
 
     if args.no_advisories && args.no_fetch {
-        status_print(json_mode, "note: --no-fetch has no effect with --no-advisories");
+        status_print(
+            json_mode,
+            "note: --no-fetch has no effect with --no-advisories",
+        );
     }
 
     status_print(
@@ -108,7 +111,10 @@ async fn main() -> Result<()> {
     let db = if args.no_advisories {
         None
     } else {
-        status_print(json_mode, format!("  {} Fetching RustSec advisory database...", "⠋".cyan()));
+        status_print(
+            json_mode,
+            format!("  {} Fetching RustSec advisory database...", "⠋".cyan()),
+        );
         let load_fn = if args.no_fetch {
             advisories::load_cached
         } else {

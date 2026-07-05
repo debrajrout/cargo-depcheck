@@ -55,8 +55,8 @@ matches your comfort and time.
 **Who:** Users who turn problems into actionable GitHub issues.
 
 **You can:**
-- File [bug reports](https://github.com/debarajrout/cargo-depcheck/issues/new?template=bug_report.yml) with reproduction steps
-- File [feature requests](https://github.com/debarajrout/cargo-depcheck/issues/new?template=feature_request.yml) explaining the use case
+- File [bug reports](https://github.com/debrajrout/cargo-depcheck/issues/new?template=bug_report.yml) with reproduction steps
+- File [feature requests](https://github.com/debrajrout/cargo-depcheck/issues/new?template=feature_request.yml) explaining the use case
 - Comment on existing issues with "+1", counter-examples, or extra context
 - Verify fixes on `main` after a PR merges
 
@@ -91,7 +91,7 @@ fixes (typos, clippy warnings, doc clarifications) do not need prior approval.
 **You can:**
 - Reproduce bug reports and ask clarifying questions
 - Label issues (bug, enhancement, good first issue, duplicate)
-- Point newcomers to [good first issues](https://github.com/debarajrout/cargo-depcheck/labels/good%20first%20issue)
+- Point newcomers to [good first issues](https://github.com/debrajrout/cargo-depcheck/labels/good%20first%20issue)
 - Close stale issues with a friendly summary
 
 Triagers earn trust over time; maintainers may grant triage permissions on GitHub
@@ -101,7 +101,7 @@ after consistent helpful participation.
 
 ### 🧭 Maintainer
 
-**Who:** Core stewards with merge access (currently [@debarajrout](https://github.com/debarajrout)).
+**Who:** Core stewards with merge access (currently [@debrajrout](https://github.com/debrajrout)).
 
 **Responsibilities:**
 - Review PRs for correctness, scope, and project direction
@@ -153,7 +153,7 @@ Comment on an issue or open a new one before starting large work.
 ### Clone and build
 
 ```sh
-git clone https://github.com/debarajrout/cargo-depcheck.git
+git clone https://github.com/debrajrout/cargo-depcheck.git
 cd cargo-depcheck
 cargo build
 ```
@@ -290,7 +290,7 @@ We prioritize features that improve **triage clarity** without duplicating
 
 ### Good first issue
 
-Look for the [`good first issue`](https://github.com/debarajrout/cargo-depcheck/labels/good%20first%20issue) label.
+Look for the [`good first issue`](https://github.com/debrajrout/cargo-depcheck/labels/good%20first%20issue) label.
 Maintainers add it to issues that are scoped, documented, and don't need deep
 Rust async expertise.
 
@@ -322,7 +322,7 @@ same terms as the project ([MIT](LICENSE-MIT) / [Apache-2.0](LICENSE-APACHE)).
 
 ## Questions?
 
-- **Usage questions:** open a [GitHub Discussion](https://github.com/debarajrout/cargo-depcheck/discussions) or an issue with the `question` label
+- **Usage questions:** open a [GitHub Discussion](https://github.com/debrajrout/cargo-depcheck/discussions) or an issue with the `question` label
 - **Security:** see [SECURITY.md](SECURITY.md) — do not file public issues for vulns
 - **Conduct concerns:** debaraj@zoop.one
 

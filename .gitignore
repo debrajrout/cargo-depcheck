@@ -5,7 +5,7 @@
 .advisory-db/
 
 # Local LLM / IDE context (not for publication)
-# HANDOVER.md
+HANDOVER.md
 # AGENTS.md
 # CLAUDE.md
 # .cursor/

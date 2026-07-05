@@ -146,7 +146,7 @@ Comment on an issue or open a new one before starting large work.
 
 ### Prerequisites
 
-- Rust **1.70+** (`rustc --version`)
+- Rust **1.91+** (`rustc --version`)
 - `cargo` on your PATH
 - Network access (first run fetches crates.io + RustSec advisory DB)
 

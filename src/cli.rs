@@ -47,4 +47,9 @@ pub struct Args {
     /// Print only the summary counts, no detailed report
     #[arg(short, long)]
     pub quiet: bool,
+
+    /// Exit 0 even if crates.io metadata could not be fetched for some
+    /// dependencies (by default, an incomplete data layer is a failure)
+    #[arg(long)]
+    pub allow_incomplete: bool,
 }

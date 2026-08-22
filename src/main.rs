@@ -62,14 +62,19 @@ async fn main() -> Result<()> {
     );
 
     // ── Phase 2: fetch crates.io metadata concurrently ───────────────────────
+    // Only registry-published crates have crates.io metadata at all — a git
+    // or path dependency will 404 forever and must not be treated as a
+    // failed fetch (see graph::DependencyNode::is_registry).
     let unique_names: Vec<String> = {
         let mut seen = HashSet::new();
         nodes
             .iter()
+            .filter(|n| n.is_registry)
             .filter(|n| seen.insert(n.name.clone()))
             .map(|n| n.name.clone())
             .collect()
     };
+    let attempted = unique_names.len();
 
     let client = Arc::new(cratesio::build_client()?);
     let semaphore = Arc::new(Semaphore::new(5));
@@ -98,14 +103,34 @@ async fn main() -> Result<()> {
     }
 
     let mut meta_map: HashMap<String, cratesio::Metadata> = HashMap::new();
+    let mut unchecked: Vec<String> = Vec::new();
+    let mut last_error: Option<String> = None;
     while let Some(outcome) = set.join_next().await {
         pb.inc(1);
-        if let Ok((name, Ok(meta))) = outcome {
-            meta_map.insert(name, meta);
+        match outcome {
+            Ok((name, Ok(meta))) => {
+                meta_map.insert(name, meta);
+            }
+            Ok((name, Err(err))) => {
+                last_error = Some(err.to_string());
+                unchecked.push(name);
+            }
+            Err(join_err) => {
+                last_error = Some(join_err.to_string());
+            }
         }
     }
+    unchecked.sort_unstable();
 
     pb.finish_and_clear();
+
+    if !unchecked.is_empty() {
+        let sample: Vec<String> = unchecked.iter().take(3).cloned().collect();
+        status_print(
+            json_mode,
+            report::degraded_warning(unchecked.len(), attempted, &sample, last_error.as_deref()),
+        );
+    }
 
     // ── Phase 3: fetch RustSec advisory database ─────────────────────────────
     let db = if args.no_advisories {
@@ -144,7 +169,10 @@ async fn main() -> Result<()> {
     let now = Utc::now();
     let max_dependents = nodes.iter().map(|n| n.dependent_count).max().unwrap_or(0);
 
-    let mut findings: Vec<report::Finding> = nodes
+    // Built before the threshold filter so a crate we have zero signal for
+    // (no advisories, no crates.io metadata) is counted as unknown rather
+    // than silently vanishing from the "healthy" tally.
+    let all_findings: Vec<report::Finding> = nodes
         .into_iter()
         .filter(|node| !ignore.contains(&node.name))
         .map(|node| {
@@ -165,6 +193,15 @@ async fn main() -> Result<()> {
                 advisories: node_advisories,
             }
         })
+        .collect();
+
+    let unknown = all_findings
+        .iter()
+        .filter(|f| f.advisories.is_empty() && !meta_map.contains_key(&f.node.name))
+        .count();
+
+    let mut findings: Vec<report::Finding> = all_findings
+        .into_iter()
         .filter(|finding| finding.risk.total >= args.threshold)
         .collect();
 
@@ -183,11 +220,18 @@ async fn main() -> Result<()> {
         .iter()
         .filter(|f| f.risk.level == score::RiskLevel::Warn)
         .count();
-    let summary = report::summarize(total_dependencies, critical, warnings);
+    let summary = report::summarize(total_dependencies, critical, warnings, unknown);
 
     // ── Phase 5: render report ───────────────────────────────────────────────
     if json_mode {
-        let json_report = report::to_json(&findings, &meta_map, now, &summary, args.threshold);
+        let json_report = report::to_json(
+            &findings,
+            &meta_map,
+            now,
+            &summary,
+            args.threshold,
+            &unchecked,
+        );
         let output = report::render_json(&json_report)?;
         println!("{output}");
     } else {
@@ -199,6 +243,15 @@ async fn main() -> Result<()> {
             args.quiet,
             args.threshold,
         );
+    }
+
+    // A run that could not check some (or all) registry crates has an
+    // incomplete data layer — that is not the same thing as a clean report,
+    // and must not exit 0 by default. `--allow-incomplete` opts back in.
+    // The exit code here is a placeholder (P0-4 defines the full 0/1/2/3
+    // contract and folds this into it).
+    if !unchecked.is_empty() && !args.allow_incomplete {
+        std::process::exit(1);
     }
 
     Ok(())

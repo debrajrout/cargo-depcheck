@@ -23,6 +23,7 @@ pub struct Finding {
 pub struct ReportSummary {
     pub critical: usize,
     pub warnings: usize,
+    pub unknown: usize,
     pub healthy: usize,
 }
 
@@ -37,8 +38,17 @@ pub struct JsonReport {
 pub struct JsonSummary {
     pub critical: usize,
     pub warnings: usize,
+    pub unknown: usize,
     pub healthy: usize,
     pub threshold: f64,
+    /// True when crates.io metadata could not be fetched for one or more
+    /// registry dependencies. Findings are still reported, but version-lag
+    /// and maintenance scoring for affected crates is incomplete.
+    pub degraded: bool,
+    /// Names of registry dependencies whose crates.io metadata fetch failed
+    /// this run (capped to a small sample; see `unchecked_count` for the total).
+    pub unchecked_sample: Vec<String>,
+    pub unchecked_count: usize,
 }
 
 #[derive(Serialize)]
@@ -62,11 +72,54 @@ pub struct JsonFinding {
     pub advisories: Vec<String>,
 }
 
-pub fn summarize(total: usize, critical: usize, warnings: usize) -> ReportSummary {
+/// A prominent, hard-to-miss warning for when crates.io metadata could not
+/// be fetched for one or more registry dependencies. Version-lag and
+/// maintenance scoring is unavailable for the affected crates, so results
+/// are incomplete — this must never be confused with a clean report.
+pub fn degraded_warning(
+    unchecked_count: usize,
+    attempted: usize,
+    sample: &[String],
+    last_error: Option<&str>,
+) -> String {
+    let noun = if unchecked_count == 1 {
+        "crate"
+    } else {
+        "crates"
+    };
+    let mut msg = format!(
+        "  {} {} of {attempted} {noun} could not be checked (network error) — results are incomplete",
+        "⚠".yellow().bold(),
+        unchecked_count.to_string().yellow().bold(),
+    );
+    if !sample.is_empty() {
+        let more = unchecked_count.saturating_sub(sample.len());
+        let suffix = if more > 0 {
+            format!(" (+ {more} more)")
+        } else {
+            String::new()
+        };
+        msg.push_str(&format!(
+            "
+     e.g. {}{suffix}",
+            sample.join(", ")
+        ));
+    }
+    if let Some(err) = last_error {
+        msg.push_str(&format!(
+            "
+     last error: {err}"
+        ));
+    }
+    msg
+}
+
+pub fn summarize(total: usize, critical: usize, warnings: usize, unknown: usize) -> ReportSummary {
     ReportSummary {
         critical,
         warnings,
-        healthy: total.saturating_sub(critical + warnings),
+        unknown,
+        healthy: total.saturating_sub(critical + warnings + unknown),
     }
 }
 
@@ -76,14 +129,19 @@ pub fn to_json(
     now: DateTime<Utc>,
     summary: &ReportSummary,
     threshold: f64,
+    unchecked: &[String],
 ) -> JsonReport {
     JsonReport {
         schema_version: JSON_SCHEMA_VERSION,
         summary: JsonSummary {
             critical: summary.critical,
             warnings: summary.warnings,
+            unknown: summary.unknown,
             healthy: summary.healthy,
             threshold,
+            degraded: !unchecked.is_empty(),
+            unchecked_sample: unchecked.iter().take(5).cloned().collect(),
+            unchecked_count: unchecked.len(),
         },
         findings: findings
             .iter()
@@ -148,12 +206,22 @@ pub fn render(
 }
 
 fn print_summary(summary: &ReportSummary) {
-    println!(
-        "  {} critical  ·  {} warnings  ·  {} healthy\n",
-        summary.critical.to_string().red().bold(),
-        summary.warnings.to_string().yellow().bold(),
-        summary.healthy.to_string().green(),
-    );
+    if summary.unknown > 0 {
+        println!(
+            "  {} critical  ·  {} warnings  ·  {} unknown  ·  {} healthy\n",
+            summary.critical.to_string().red().bold(),
+            summary.warnings.to_string().yellow().bold(),
+            summary.unknown.to_string().dimmed(),
+            summary.healthy.to_string().green(),
+        );
+    } else {
+        println!(
+            "  {} critical  ·  {} warnings  ·  {} healthy\n",
+            summary.critical.to_string().red().bold(),
+            summary.warnings.to_string().yellow().bold(),
+            summary.healthy.to_string().green(),
+        );
+    }
 }
 
 fn json_finding(
@@ -352,10 +420,30 @@ mod tests {
 
     #[test]
     fn summarize_counts() {
-        let summary = summarize(100, 2, 6);
+        let summary = summarize(100, 2, 6, 0);
         assert_eq!(summary.critical, 2);
         assert_eq!(summary.warnings, 6);
+        assert_eq!(summary.unknown, 0);
         assert_eq!(summary.healthy, 92);
+    }
+
+    #[test]
+    fn summarize_never_folds_unknown_into_healthy() {
+        let summary = summarize(100, 2, 6, 5);
+        assert_eq!(summary.unknown, 5);
+        assert_eq!(summary.healthy, 87);
+        assert_eq!(
+            summary.critical + summary.warnings + summary.unknown + summary.healthy,
+            100
+        );
+    }
+
+    #[test]
+    fn summarize_saturates_when_buckets_exceed_total() {
+        // Defensive: a total that undercounts (e.g. stale caller) must never
+        // underflow healthy into a huge usize via wraparound.
+        let summary = summarize(5, 3, 3, 3);
+        assert_eq!(summary.healthy, 0);
     }
 
     #[test]

@@ -14,6 +14,10 @@ pub struct DependencyNode {
     pub depth: usize,
     /// Number of packages in the tree that directly depend on this one.
     pub dependent_count: usize,
+    /// True if this package is published on crates.io. Git and path
+    /// dependencies never have crates.io metadata, so callers must not
+    /// treat their absence as a fetch failure.
+    pub is_registry: bool,
 }
 
 pub fn load(manifest_path: Option<&Path>) -> Result<Vec<DependencyNode>> {
@@ -95,6 +99,7 @@ pub fn load(manifest_path: Option<&Path>) -> Result<Vec<DependencyNode>> {
                 is_direct: direct_ids.contains(&n.id),
                 depth,
                 dependent_count: parents.get(&n.id).map_or(0, |v| v.len()),
+                is_registry: pkg.source.as_ref().is_some_and(|s| s.is_crates_io()),
             })
         })
         .collect();

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A run that could not fetch crates.io metadata for some or all dependencies
+  no longer reports those crates as healthy. It now prints a prominent
+  warning, buckets them as `unknown` in the summary (never folded into
+  `healthy`), and exits non-zero by default (`--allow-incomplete` opts out).
+  `--json` gains `degraded`, `unchecked_count`, and `unchecked_sample`.
+- Git and path dependencies are no longer queried against crates.io (they
+  have no registry metadata by definition) and so no longer falsely count
+  as fetch failures.
+
 ### Added
 
 - Dependency graph analysis with security advisories (RustSec), version lag,

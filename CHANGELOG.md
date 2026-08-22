@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal report (CRITICAL / WARN / NOTICE) and versioned `--json` output.
 - CLI flags: `--threshold`, `--ignore`, `--json`, `--no-advisories`,
   `--no-fetch`, `--quiet`, `--manifest-path`.
-- CI: test matrix (Linux/macOS/Windows), fmt, clippy, MSRV (1.70) build,
+- CI: test matrix (Linux/macOS/Windows), fmt, clippy, MSRV (1.91) build,
   and `cargo-deny` (advisories/licenses/bans/sources) checks.
 - Release workflow: tagged builds for Linux, macOS (x86_64 + aarch64), and
   Windows, published to GitHub Releases.

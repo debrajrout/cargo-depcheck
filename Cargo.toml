@@ -46,9 +46,6 @@ chrono = { version = "0.4", features = ["serde"] }
 # Error handling
 anyhow = "1"
 
-# Terminal progress bar
-indicatif = "0.18"
-
 # Terminal colors
 colored = "3"
 unicode-width = "0.2"

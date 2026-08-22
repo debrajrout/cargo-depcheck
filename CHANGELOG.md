@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via `github/codeql-action/upload-sarif` before the `fail-on` gate can
   fail the job, so findings still reach the Security tab either way.
 
+### Removed
+
+- **Unused `indicatif` dependency.** Never referenced anywhere in the
+  source — the tool's progress lines are plain `print!`/`println!`, not an
+  `indicatif` progress bar. Dropping it trims the dependency tree with no
+  behavior change.
+
 ### Changed — BREAKING
 
 - **Version-lag scoring now follows Cargo's own compatibility rule.**

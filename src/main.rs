@@ -243,16 +243,40 @@ async fn main() -> Result<()> {
         );
     }
 
-    // A run that could not check some (or all) registry crates has an
-    // incomplete data layer — that is not the same thing as a clean report,
-    // and must not exit 0 by default. `--allow-incomplete` opts back in.
-    // The exit code here is a placeholder (P0-4 defines the full 0/1/2/3
-    // contract and folds this into it).
-    if !unchecked.is_empty() && !args.allow_incomplete {
-        std::process::exit(1);
+    // Exit code contract: 0 clean · 1 a finding at/above --fail-on is
+    // present · 2 usage error (handled by clap before we ever get here) ·
+    // 3 the data layer was incomplete (a run that could not check some or
+    // all registry crates is not the same thing as a clean report).
+    let code = exit_code(
+        !unchecked.is_empty(),
+        args.allow_incomplete,
+        args.fail_on,
+        critical,
+        warnings,
+    );
+    if code != 0 {
+        std::process::exit(code);
     }
 
     Ok(())
+}
+
+fn exit_code(
+    degraded: bool,
+    allow_incomplete: bool,
+    fail_on: cli::FailOn,
+    critical: usize,
+    warnings: usize,
+) -> i32 {
+    if degraded && !allow_incomplete {
+        return 3;
+    }
+    let triggered = match fail_on {
+        cli::FailOn::None => false,
+        cli::FailOn::Warn => critical > 0 || warnings > 0,
+        cli::FailOn::Critical => critical > 0,
+    };
+    i32::from(triggered)
 }
 
 fn status_print(json_mode: bool, message: impl std::fmt::Display) {
@@ -266,4 +290,50 @@ fn status_print(json_mode: bool, message: impl std::fmt::Display) {
 fn manifest_display(path: Option<&std::path::Path>) -> String {
     path.map(|p| p.display().to_string())
         .unwrap_or_else(|| "current project".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_run_exits_zero() {
+        assert_eq!(exit_code(false, false, cli::FailOn::Critical, 0, 0), 0);
+    }
+
+    #[test]
+    fn fail_on_none_never_fails_on_findings() {
+        assert_eq!(exit_code(false, false, cli::FailOn::None, 5, 5), 0);
+    }
+
+    #[test]
+    fn fail_on_critical_ignores_warnings() {
+        assert_eq!(exit_code(false, false, cli::FailOn::Critical, 0, 3), 0);
+        assert_eq!(exit_code(false, false, cli::FailOn::Critical, 1, 0), 1);
+    }
+
+    #[test]
+    fn fail_on_warn_triggers_on_either() {
+        assert_eq!(exit_code(false, false, cli::FailOn::Warn, 0, 0), 0);
+        assert_eq!(exit_code(false, false, cli::FailOn::Warn, 0, 1), 1);
+        assert_eq!(exit_code(false, false, cli::FailOn::Warn, 1, 0), 1);
+    }
+
+    #[test]
+    fn degraded_run_exits_three_regardless_of_fail_on() {
+        assert_eq!(exit_code(true, false, cli::FailOn::None, 0, 0), 3);
+        assert_eq!(exit_code(true, false, cli::FailOn::Critical, 0, 0), 3);
+    }
+
+    #[test]
+    fn allow_incomplete_overrides_the_degraded_exit() {
+        assert_eq!(exit_code(true, true, cli::FailOn::None, 0, 0), 0);
+    }
+
+    #[test]
+    fn allow_incomplete_does_not_suppress_a_real_finding_failure() {
+        // Degraded data and a real finding can coexist; --allow-incomplete
+        // only waives the "data layer was incomplete" failure, not findings.
+        assert_eq!(exit_code(true, true, cli::FailOn::Critical, 1, 0), 1);
+    }
 }

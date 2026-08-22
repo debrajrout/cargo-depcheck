@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// Outer struct named "cargo" so `cargo depcheck` works as a subcommand.
 /// When cargo invokes a plugin, it passes the subcommand name as the first
@@ -52,4 +52,19 @@ pub struct Args {
     /// dependencies (by default, an incomplete data layer is a failure)
     #[arg(long)]
     pub allow_incomplete: bool,
+
+    /// Exit non-zero when a finding at or above this level is present.
+    /// (An incomplete data layer exits non-zero regardless — see --allow-incomplete.)
+    #[arg(long, value_enum, default_value = "none")]
+    pub fail_on: FailOn,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum FailOn {
+    /// Never fail on findings (default for 0.x; incomplete data still fails)
+    None,
+    /// Fail if any WARN or CRITICAL finding is present
+    Warn,
+    /// Fail only if a CRITICAL finding is present
+    Critical,
 }

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `cargo depcheck` now exits non-zero on failure instead of always exiting 0.
+  Contract: `0` clean · `1` a finding at/above `--fail-on`'s level is present
+  · `2` usage error · `3` the data layer was incomplete (crates.io metadata
+  could not be fetched for some dependencies). New `--fail-on
+  <none|warn|critical>` flag (default `none` for 0.x; will default to
+  `critical` at 1.0). The README's `jq`-based CI recipe is replaced by
+  `--fail-on critical`.
+
 - A run that could not fetch crates.io metadata for some or all dependencies
   no longer reports those crates as healthy. It now prints a prominent
   warning, buckets them as `unknown` in the summary (never folded into

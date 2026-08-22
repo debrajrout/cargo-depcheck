@@ -81,6 +81,8 @@ Direct dependencies appear **bold** in the report.
 | `--no-advisories` | Skip RustSec — version/maintenance only |
 | `--no-fetch` | Use cached advisory DB, no git pull |
 | `--manifest-path PATH` | Point at another project |
+| `--fail-on <none\|warn\|critical>` | Exit non-zero when a finding at/above this level is present (default: `none`) |
+| `--allow-incomplete` | Exit 0 even if crates.io metadata couldn't be fetched for some dependencies |
 
 ```sh
 cargo depcheck --threshold 30              # see lower-scoring issues
@@ -112,12 +114,19 @@ A stale leaf at the edge of your tree scores lower than the same stale crate hol
 
 ```yaml
 - run: cargo install cargo-depcheck
-- run: cargo depcheck --json --threshold 70 > depcheck.json
-- run: |
-    test "$(jq '.summary.critical' depcheck.json)" -eq 0
+- run: cargo depcheck --fail-on critical
 ```
 
-JSON includes `"schema_version": 1` so scripts can pin against it.
+No `jq`, no exit-code plumbing — `--fail-on` does it:
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Clean, or no finding reached `--fail-on`'s level |
+| `1` | A finding at or above `--fail-on`'s level is present |
+| `2` | Usage error (bad flag or argument) |
+| `3` | crates.io metadata couldn't be fetched for some dependencies — the report is incomplete (see `--allow-incomplete`) |
+
+`--fail-on` accepts `none` (default), `warn`, or `critical`. JSON includes `"schema_version": 1` so scripts can pin against it.
 
 ---
 

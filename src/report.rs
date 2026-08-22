@@ -583,8 +583,15 @@ fn build_header(finding: &Finding, level: RiskLevel) -> (String, usize) {
 
     let score_text = format!("{:>3.0}", finding.risk.total);
     let bar = score_bar(finding.risk.total, 12);
+    // Plain-text severity tag, always present alongside the section box's
+    // own CRITICAL/WARN/NOTICE header (never a substitute for it — a row
+    // copy-pasted or grepped out of its box loses that context) and never
+    // color alone: color plus a bare number was exactly the case a
+    // red/green-colorblind reader, a grayscale render, or a piped
+    // color-stripped terminal couldn't disambiguate.
+    let marker = severity_marker(level);
 
-    let visible_width = format!("{padded_name}{score_text} {bar}").width();
+    let visible_width = format!("{padded_name}{score_text} {marker} {bar}").width();
 
     let score_display = match level {
         RiskLevel::Critical => score_text.red().bold().to_string(),
@@ -596,7 +603,18 @@ fn build_header(finding: &Finding, level: RiskLevel) -> (String, usize) {
     } else {
         padded_name
     };
-    (format!("{styled_name}{score_display} {bar}"), visible_width)
+    (
+        format!("{styled_name}{score_display} {marker} {bar}"),
+        visible_width,
+    )
+}
+
+fn severity_marker(level: RiskLevel) -> &'static str {
+    match level {
+        RiskLevel::Critical => "[C]",
+        RiskLevel::Warn => "[W]",
+        RiskLevel::Low => "[N]",
+    }
 }
 
 fn score_bar(score: f64, width: usize) -> String {
@@ -1025,6 +1043,53 @@ mod tests {
             "uncolored snapshot must contain no ANSI escapes"
         );
         insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn severity_marker_is_distinct_and_plain_text_per_level() {
+        // The section box header (CRITICAL/WARN/NOTICE) already names the
+        // level, but a single row copy-pasted or grepped out of that
+        // context must still be classifiable — in grayscale, through a
+        // color-stripping pipe, or with `--color never`. Each level's
+        // marker must therefore be distinct plain ASCII, not merely a
+        // different color on the same text.
+        let markers = [
+            severity_marker(RiskLevel::Critical),
+            severity_marker(RiskLevel::Warn),
+            severity_marker(RiskLevel::Low),
+        ];
+        for marker in markers {
+            assert!(
+                marker.is_ascii(),
+                "{marker:?} must be identifiable without relying on a specific font/locale"
+            );
+        }
+        assert_eq!(
+            markers
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            markers.len(),
+            "every level must have a visually distinct marker: {markers:?}"
+        );
+    }
+
+    #[test]
+    fn uncolored_row_still_carries_its_severity_marker() {
+        let _guard = ColorOverrideGuard::new(false);
+
+        for (level, marker) in [
+            (RiskLevel::Critical, "[C]"),
+            (RiskLevel::Warn, "[W]"),
+            (RiskLevel::Low, "[N]"),
+        ] {
+            let finding = test_finding("some-crate", false, level, 50.0);
+            let (header, _) = build_header(&finding, level);
+            assert!(
+                header.contains(marker),
+                "{level:?} row must carry {marker:?} even with color off: {header:?}"
+            );
+        }
     }
 
     #[test]

@@ -50,7 +50,7 @@ Found 366 dependencies  (12 direct · 354 transitive)
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  WARN                                                                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ openssl 0.10.45                            94 ████████████                  │
+│ openssl 0.10.45                            94 [W] ████████████              │
 │   advisory: RUSTSEC-2023-0044                                               │
 │   3 major version(s) behind latest (0.10.45 → 3.0.0)                        │
 │   last published 2 years ago                                                │
@@ -66,7 +66,10 @@ Each finding shows **why** it ranked where it did — not just a version number 
 | **WARN** | 40–70 | Worth a look this sprint |
 | *(hidden)* | < 40 | Omitted by default — use `--threshold` to reveal |
 
-Direct dependencies appear **bold** in the report.
+Direct dependencies appear **bold** in the report. Severity is never
+color-only: each row also carries a plain-text `[C]`/`[W]`/`[N]` tag
+(matching CRITICAL/WARN/NOTICE), so a row stays classifiable in grayscale,
+through a color-stripping pipe, or with `--color never`.
 
 ---
 

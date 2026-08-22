@@ -141,12 +141,10 @@ Ask if you are interested after several merged contributions.
 These are **not blockers** — the tool works today — but they would help the
 project mature:
 
-1. **`[package.metadata.depcheck]` config** — per-project threshold and ignore list in `Cargo.toml`
-2. **Offline advisory fixtures** — `tests/fixtures/` already covers the dependency graph (see `graph.rs`'s tests) and CLI behavior with no live network; RustSec-specific scenarios (a known-vulnerable pin, a yanked version) still rely on the real cached advisory DB
-3. **Scoring feedback** — real projects where ranking feels wrong; we tune weights together
-4. **Docs & examples** — blog-style "how we use depcheck in CI" snippets
-5. **Accessibility** — color-blind-friendly glyphs (color is already respected via `--color`/`NO_COLOR`/`CLICOLOR_FORCE`, but severity is still color-only)
-6. **SARIF / delta mode** — see open feature requests
+1. **Offline advisory fixtures** — `tests/fixtures/` already covers the dependency graph (see `graph.rs`'s tests) and CLI behavior with no live network; RustSec-specific scenarios (a known-vulnerable pin, a yanked version) still rely on the real cached advisory DB
+2. **Scoring feedback** — real projects where ranking feels wrong; we tune weights together
+3. **Docs & examples** — blog-style "how we use depcheck in CI" snippets
+4. **Delta mode** — diff two reports (e.g. before/after a `cargo update`) — see open feature requests
 
 Comment on an issue or open a new one before starting large work.
 

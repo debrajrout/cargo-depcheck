@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--locked` and `--frozen` flags**, passed through to `cargo metadata`
   for reproducible-lockfile workflows (`--frozen` implies `--offline` and
   `--locked`).
+- **Accessibility: severity is no longer color-only.** Each finding row now
+  carries a plain-text `[C]`/`[W]`/`[N]` tag matching its
+  CRITICAL/WARN/NOTICE section, so a row stays classifiable in grayscale,
+  through a color-stripping pipe, or copy-pasted out of its box — not just
+  by red/yellow, which red-green colorblindness can't distinguish.
+  `--color never` was already text-complete; this makes every row
+  self-describing too.
 - **Shell completions and a man page**: `cargo depcheck completions
   <bash|elvish|fish|powershell|zsh>` and `cargo depcheck mangen` print a
   completion script / roff man page to stdout (both hidden from `--help`

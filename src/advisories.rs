@@ -1,12 +1,8 @@
-use std::collections::HashMap;
-
 use anyhow::{Context, Result};
 use rustsec::advisory::Advisory;
 use rustsec::database::Query;
 use rustsec::{Collection, Database, Repository};
 use semver::Version;
-
-use crate::graph::DependencyNode;
 
 /// Fetch the RustSec advisory database from GitHub, refreshing the local cache when stale.
 pub fn load() -> Result<Database> {
@@ -39,23 +35,4 @@ pub fn lookup(db: &Database, name: &str, version: &Version) -> Vec<Advisory> {
         .package_version(version.clone());
 
     db.query(&query).into_iter().cloned().collect()
-}
-
-/// Build a map of crate name → advisories found anywhere in the resolved graph.
-///
-/// When the same crate appears at multiple versions, advisories are merged and
-/// deduplicated by advisory ID.
-pub fn index(db: &Database, nodes: &[DependencyNode]) -> HashMap<String, Vec<Advisory>> {
-    let mut map: HashMap<String, Vec<Advisory>> = HashMap::new();
-
-    for node in nodes {
-        for advisory in lookup(db, &node.name, &node.version) {
-            let entry = map.entry(node.name.clone()).or_default();
-            if !entry.iter().any(|existing| existing.id() == advisory.id()) {
-                entry.push(advisory);
-            }
-        }
-    }
-
-    map
 }

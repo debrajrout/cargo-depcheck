@@ -162,26 +162,16 @@ async fn main() -> Result<()> {
         Some(database)
     };
 
-    if let Some(ref database) = db {
-        let advisory_index = advisories::index(database, &nodes);
-        status_print(
-            json_mode,
-            quiet,
-            format!(
-                "\r  {} RustSec advisory database ready  ({} affected)",
-                "✓".green(),
-                advisory_index.len()
-            ),
-        );
-    }
-
     // ── Phase 4: compute risk scores ─────────────────────────────────────────
     let now = Utc::now();
     let max_dependents = nodes.iter().map(|n| n.dependent_count).max().unwrap_or(0);
 
-    // Built before the threshold filter so a crate we have zero signal for
-    // (no advisories, no crates.io metadata) is counted as unknown rather
-    // than silently vanishing from the "healthy" tally.
+    // Each node's advisories are looked up exactly once here — previously
+    // `advisories::index()` did a full pass over every node just to report
+    // a count, then this loop repeated the same per-node lookup immediately
+    // after. Built before the threshold filter so a crate we have zero
+    // signal for (no advisories, no crates.io metadata) is counted as
+    // unknown rather than silently vanishing from the "healthy" tally.
     let all_findings: Vec<report::Finding> = nodes
         .into_iter()
         .filter(|node| !ignore.contains(&node.name))
@@ -204,6 +194,23 @@ async fn main() -> Result<()> {
             }
         })
         .collect();
+
+    if db.is_some() {
+        let affected: HashSet<&str> = all_findings
+            .iter()
+            .filter(|f| !f.advisories.is_empty())
+            .map(|f| f.node.name.as_str())
+            .collect();
+        status_print(
+            json_mode,
+            quiet,
+            format!(
+                "\r  {} RustSec advisory database ready  ({} affected)",
+                "✓".green(),
+                affected.len()
+            ),
+        );
+    }
 
     let unknown = all_findings
         .iter()

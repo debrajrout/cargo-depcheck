@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Removed an unreachable branch in the advisory-status message, and the
+  redundant full-graph advisory scan that only existed to produce its
+  count — each dependency's advisories are now looked up exactly once.
 - `--version` now works (previously errored with "unexpected argument").
   `--help` on the bare binary no longer leaks an internal implementation
   comment as its description. `--quiet` now prints exactly one line instead

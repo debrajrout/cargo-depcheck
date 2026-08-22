@@ -8,6 +8,7 @@ use registry::IndexSource;
 
 mod advisories;
 mod cli;
+mod config;
 mod graph;
 mod registry;
 mod report;
@@ -31,7 +32,7 @@ async fn main() -> Result<()> {
     // stdout stays clean for the payload, same convention as plain --json.
     let machine_readable = !matches!(format, cli::OutputFormat::Human);
     let quiet = args.quiet;
-    let ignore: HashSet<String> = args.ignore.into_iter().collect();
+    let now = Utc::now();
 
     if args.no_advisories && args.no_fetch {
         status_print(
@@ -56,7 +57,64 @@ async fn main() -> Result<()> {
     );
 
     // ── Phase 1: parse the dependency graph ─────────────────────────────────
-    let (nodes, workspace_root) = graph::load(args.manifest_path.as_deref())?;
+    let load_options = graph::LoadOptions {
+        offline: args.offline,
+        locked: args.locked,
+        frozen: args.frozen,
+    };
+    let (nodes, metadata) = graph::load(args.manifest_path.as_deref(), load_options)?;
+    let workspace_root = metadata.workspace_root.clone().into_std_path_buf();
+
+    // [package.metadata.depcheck], falling back to
+    // [workspace.metadata.depcheck] — see config.rs. A malformed table is a
+    // usage error (exit 2), not a panic or a generic failure.
+    let package_metadata = metadata
+        .root_package()
+        .map(|p| &p.metadata)
+        .unwrap_or(&serde_json::Value::Null);
+    let config = match config::load(
+        package_metadata,
+        &metadata.workspace_metadata,
+        now.date_naive(),
+    ) {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            std::process::exit(2);
+        }
+    };
+
+    let threshold = args
+        .threshold
+        .or(config.threshold)
+        .unwrap_or(score::DEFAULT_THRESHOLD);
+    let fail_on = args.fail_on.or(config.fail_on).unwrap_or(cli::FailOn::None);
+
+    // CLI --ignore and config-file ignores are additive (a union of crates
+    // to skip), not one overriding the other — ignoring is naturally a set
+    // operation, unlike threshold/fail_on which are single values.
+    let mut ignore: HashSet<String> = args.ignore.into_iter().collect();
+    let mut ignored_with_reason: Vec<(String, Option<String>)> =
+        ignore.iter().map(|name| (name.clone(), None)).collect();
+    for entry in &config.ignores {
+        if entry.is_expired {
+            status_print(
+                machine_readable,
+                quiet,
+                format!(
+                    "  {} ignore for {:?} expired on {} — no longer applied, showing it again",
+                    "⚠".yellow(),
+                    entry.crate_name,
+                    entry.expires.expect("is_expired implies expires is Some"),
+                ),
+            );
+            continue;
+        }
+        ignore.insert(entry.crate_name.clone());
+        ignored_with_reason.push((entry.crate_name.clone(), entry.reason.clone()));
+    }
+    ignored_with_reason.sort_by(|a, b| a.0.cmp(&b.0));
+    ignored_with_reason.dedup_by(|a, b| a.0 == b.0);
 
     let direct = nodes.iter().filter(|n| n.is_direct).count();
     let transitive = nodes.len() - direct;
@@ -151,8 +209,6 @@ async fn main() -> Result<()> {
     };
 
     // ── Phase 4: compute risk scores ─────────────────────────────────────────
-    let now = Utc::now();
-
     // Each node's advisories are looked up exactly once here — previously
     // `advisories::index()` did a full pass over every node just to report
     // a count, then this loop repeated the same per-node lookup immediately
@@ -202,7 +258,7 @@ async fn main() -> Result<()> {
 
     let mut findings: Vec<report::Finding> = all_findings
         .into_iter()
-        .filter(|finding| finding.risk.total >= args.threshold)
+        .filter(|finding| finding.risk.total >= threshold)
         .collect();
 
     findings.sort_by(|a, b| {
@@ -230,9 +286,12 @@ async fn main() -> Result<()> {
                 &meta_map,
                 now,
                 &summary,
-                args.threshold,
-                &unchecked,
-                duplicates,
+                threshold,
+                report::JsonExtras {
+                    unchecked: &unchecked,
+                    duplicates,
+                    ignored: ignored_with_reason,
+                },
             );
             let output = report::render_json(&json_report)?;
             println!("{output}");
@@ -250,7 +309,7 @@ async fn main() -> Result<()> {
                 now,
                 &summary,
                 args.quiet,
-                args.threshold,
+                threshold,
                 &duplicates,
             );
         }
@@ -263,7 +322,7 @@ async fn main() -> Result<()> {
     let code = exit_code(
         !unchecked.is_empty(),
         args.allow_incomplete,
-        args.fail_on,
+        fail_on,
         critical,
         warnings,
     );

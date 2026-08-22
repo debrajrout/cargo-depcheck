@@ -25,18 +25,47 @@ pub struct DependencyNode {
     pub is_registry: bool,
 }
 
-/// Returns the dependency nodes and the workspace root (where `Cargo.lock`
-/// lives — needed by `--format sarif` to anchor `locations[]`).
-pub fn load(manifest_path: Option<&Path>) -> Result<(Vec<DependencyNode>, std::path::PathBuf)> {
+/// Which cargo-standard consistency flags to pass through to the
+/// underlying `cargo metadata` call.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LoadOptions {
+    pub offline: bool,
+    pub locked: bool,
+    pub frozen: bool,
+}
+
+/// Returns the dependency nodes and the full resolved `cargo_metadata`
+/// output — the caller needs more than just the nodes: the workspace root
+/// (where `Cargo.lock` lives, for `--format sarif`'s `locations[]`) and the
+/// package/workspace `[metadata]` tables (for `[package.metadata.depcheck]`
+/// config, P2-5).
+pub fn load(
+    manifest_path: Option<&Path>,
+    options: LoadOptions,
+) -> Result<(Vec<DependencyNode>, cargo_metadata::Metadata)> {
     let mut cmd = MetadataCommand::new();
     if let Some(path) = manifest_path {
         cmd.manifest_path(path);
     }
 
+    let mut extra = Vec::new();
+    if options.frozen {
+        extra.push("--frozen".to_string());
+    } else {
+        if options.offline {
+            extra.push("--offline".to_string());
+        }
+        if options.locked {
+            extra.push("--locked".to_string());
+        }
+    }
+    if !extra.is_empty() {
+        cmd.other_options(extra);
+    }
+
     let metadata = cmd.exec().context("failed to run `cargo metadata`")?;
-    let workspace_root = metadata.workspace_root.clone().into_std_path_buf();
     let nodes = from_metadata(&metadata)?;
-    Ok((nodes, workspace_root))
+    Ok((nodes, metadata))
 }
 
 /// Pure transformation from a resolved `cargo metadata` graph to our own

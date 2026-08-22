@@ -15,7 +15,7 @@ exclude = [".github/", "tests/fixtures/"]
 
 [dependencies]
 # CLI argument parsing
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

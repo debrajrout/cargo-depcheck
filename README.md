@@ -86,6 +86,8 @@ Direct dependencies appear **bold** in the report.
 | `--allow-incomplete` | Exit 0 even if crates.io metadata couldn't be fetched for some dependencies |
 | `--color <auto\|always\|never>` | Control colored output (respects `NO_COLOR` / `CLICOLOR_FORCE` in `auto`) |
 | `--offline` | Use only the local sparse-index cache for crate metadata — no network |
+| `--locked` | Require `Cargo.lock` to be up to date (passed through to `cargo metadata`) |
+| `--frozen` | Require `Cargo.lock` and network access to be untouched — `--offline` + `--locked` combined |
 
 ```sh
 cargo depcheck --threshold 30              # see lower-scoring issues
@@ -95,6 +97,35 @@ cargo depcheck --quiet                     # 2 critical · 6 warnings · 239 hea
 ```
 
 Run `cargo depcheck --help` for the full list.
+
+---
+
+## Configuration file
+
+Commit a `[package.metadata.depcheck]` table to your `Cargo.toml` so every
+developer and CI job gets the same threshold, failure policy, and ignore
+list without repeating flags. A workspace can set
+`[workspace.metadata.depcheck]` instead as a fallback for member crates
+that don't define their own table.
+
+```toml
+[package.metadata.depcheck]
+threshold = 30
+fail_on = "critical"
+
+[[package.metadata.depcheck.ignore]]
+crate = "openssl"
+reason = "vendored, patched internally"
+expires = "2027-01-01"   # optional — omit for a permanent ignore
+```
+
+CLI flags (and their `env` equivalents, `CARGO_DEPCHECK_THRESHOLD` /
+`CARGO_DEPCHECK_FAIL_ON`) always win over this file. `--ignore` is
+additive with the config file's `ignore` list rather than replacing it. An
+ignore entry's `reason` shows up in `--json` output; once `expires` is in
+the past, the ignore stops applying and the crate is reported again, with
+a warning pointing at the stale entry. A malformed table is a config
+error (exit code 2), not a panic.
 
 ---
 

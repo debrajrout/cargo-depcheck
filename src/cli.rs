@@ -26,9 +26,10 @@ pub struct Args {
     #[arg(long, value_name = "PATH")]
     pub manifest_path: Option<PathBuf>,
 
-    /// Only report dependencies at or above this score
-    #[arg(long, value_name = "SCORE", default_value_t = 40.0)]
-    pub threshold: f64,
+    /// Only report dependencies at or above this score. Overrides
+    /// `threshold` in `[package.metadata.depcheck]`; tool default is 40.
+    #[arg(long, value_name = "SCORE", env = "CARGO_DEPCHECK_THRESHOLD")]
+    pub threshold: Option<f64>,
 
     /// Suppress a specific crate from the report (can be repeated)
     #[arg(long = "ignore", value_name = "CRATE")]
@@ -62,9 +63,11 @@ pub struct Args {
     pub allow_incomplete: bool,
 
     /// Exit non-zero when a finding at or above this level is present.
-    /// (An incomplete data layer exits non-zero regardless — see --allow-incomplete.)
-    #[arg(long, value_enum, default_value = "none")]
-    pub fail_on: FailOn,
+    /// Overrides `fail_on` in `[package.metadata.depcheck]`; tool default is
+    /// `none`. (An incomplete data layer exits non-zero regardless of this
+    /// setting — see --allow-incomplete.)
+    #[arg(long, value_enum, env = "CARGO_DEPCHECK_FAIL_ON")]
+    pub fail_on: Option<FailOn>,
 
     /// Control colored output. `auto` follows NO_COLOR / CLICOLOR_FORCE /
     /// terminal detection; an explicit choice here always wins.
@@ -73,8 +76,19 @@ pub struct Args {
 
     /// Use only the local sparse-index cache for crate metadata — no
     /// network access. Crates not already cached are reported as unknown.
+    /// Also passes --offline through to the underlying `cargo metadata`.
     #[arg(long)]
     pub offline: bool,
+
+    /// Require Cargo.lock to already be up to date (passed through to
+    /// `cargo metadata`) — the same flag cargo itself, cargo-deny, and
+    /// cargo-audit all use for this.
+    #[arg(long)]
+    pub locked: bool,
+
+    /// Equivalent to --locked --offline (passed through to `cargo metadata`)
+    #[arg(long)]
+    pub frozen: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]

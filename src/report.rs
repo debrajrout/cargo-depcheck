@@ -47,12 +47,23 @@ pub struct JsonReport {
     /// bloat at minimum, and a real security gap when the older copy is the
     /// vulnerable one and only the newer one gets patched.
     pub duplicates: Vec<JsonDuplicate>,
+    /// Crates suppressed via `--ignore` or `[package.metadata.depcheck]`'s
+    /// `ignore` list — surfaced here since an ignored crate never appears
+    /// as a finding, so this is the only place a config-file ignore's
+    /// `reason` (if any) is visible at all.
+    pub ignored: Vec<JsonIgnored>,
 }
 
 #[derive(Serialize)]
 pub struct JsonDuplicate {
     pub name: String,
     pub versions: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct JsonIgnored {
+    pub name: String,
+    pub reason: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -207,14 +218,23 @@ pub fn summarize(total: usize, critical: usize, warnings: usize, unknown: usize)
     }
 }
 
+/// Bundles the pieces of `to_json`'s payload that aren't per-finding, so
+/// the function itself stays under clippy's argument-count lint instead of
+/// growing a ninth positional `Vec` the next time something needs surfacing
+/// outside the findings list.
+pub struct JsonExtras<'a> {
+    pub unchecked: &'a [String],
+    pub duplicates: Vec<JsonDuplicate>,
+    pub ignored: Vec<(String, Option<String>)>,
+}
+
 pub fn to_json(
     findings: &[Finding],
     meta_map: &HashMap<String, Metadata>,
     now: DateTime<Utc>,
     summary: &ReportSummary,
     threshold: f64,
-    unchecked: &[String],
-    duplicates: Vec<JsonDuplicate>,
+    extras: JsonExtras,
 ) -> JsonReport {
     JsonReport {
         schema_version: JSON_SCHEMA_VERSION,
@@ -224,15 +244,20 @@ pub fn to_json(
             unknown: summary.unknown,
             healthy: summary.healthy,
             threshold,
-            degraded: !unchecked.is_empty(),
-            unchecked_sample: unchecked.iter().take(5).cloned().collect(),
-            unchecked_count: unchecked.len(),
+            degraded: !extras.unchecked.is_empty(),
+            unchecked_sample: extras.unchecked.iter().take(5).cloned().collect(),
+            unchecked_count: extras.unchecked.len(),
         },
         findings: findings
             .iter()
             .map(|finding| json_finding(finding, meta_map, now))
             .collect(),
-        duplicates,
+        duplicates: extras.duplicates,
+        ignored: extras
+            .ignored
+            .into_iter()
+            .map(|(name, reason)| JsonIgnored { name, reason })
+            .collect(),
     }
 }
 

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Configuration file support** via `[package.metadata.depcheck]`
+  (falling back to `[workspace.metadata.depcheck]`) in `Cargo.toml`:
+  `threshold`, `fail_on`, and a per-crate `ignore` list with optional
+  `reason` and `expires` (`YYYY-MM-DD`). CLI flags and their `env`
+  equivalents always win over the file; `--ignore` is additive with the
+  file's `ignore` list. An expired ignore stops applying and warns instead
+  of silently hiding a crate forever. A malformed table is a config error
+  (exit code 2), never a panic.
+- **`--locked` and `--frozen` flags**, passed through to `cargo metadata`
+  for reproducible-lockfile workflows (`--frozen` implies `--offline` and
+  `--locked`).
 - **SARIF 2.1.0 output** (`--format sarif`, alongside `--format human|json`;
   `--json` remains a working alias for `--format json`). Hand-rolled rather
   than built on `serde-sarif`, matching cargo-audit's own approach and this

@@ -22,7 +22,7 @@ const MAX_INNER_WIDTH: usize = 120;
 const BORDER_OVERHEAD: usize = 2;
 const NAME_FIELD_WIDTH: usize = 41;
 
-pub const JSON_SCHEMA_VERSION: u32 = 1;
+pub const JSON_SCHEMA_VERSION: u32 = 2;
 
 pub struct Finding {
     pub node: DependencyNode,
@@ -77,6 +77,7 @@ pub struct JsonFinding {
     pub level: &'static str,
     pub is_direct: bool,
     pub dependent_count: usize,
+    pub transitive_dependent_count: usize,
     pub components: JsonComponents,
     pub reasons: Vec<String>,
     pub advisories: Vec<String>,
@@ -354,6 +355,7 @@ fn json_finding(
         level: finding.risk.level.as_str(),
         is_direct: finding.node.is_direct,
         dependent_count: finding.node.dependent_count,
+        transitive_dependent_count: finding.node.transitive_dependent_count,
         components: JsonComponents {
             security: round1(finding.risk.security),
             version_lag: round1(finding.risk.version_lag),
@@ -493,15 +495,15 @@ fn reason_lines(
         }
     }
 
-    if node.dependent_count > 0 {
-        let noun = if node.dependent_count == 1 {
+    if node.transitive_dependent_count > 0 {
+        let noun = if node.transitive_dependent_count == 1 {
             "crate"
         } else {
             "crates"
         };
         lines.push(format!(
-            "relied on by {} {} in your graph",
-            node.dependent_count, noun
+            "relied on by {} {} in your graph, directly or transitively",
+            node.transitive_dependent_count, noun
         ));
     }
 
@@ -649,6 +651,7 @@ mod tests {
                 is_direct,
                 depth: 1,
                 dependent_count: 0,
+                transitive_dependent_count: 0,
                 is_registry: true,
             },
             risk: RiskScore {
@@ -757,6 +760,7 @@ mod tests {
                     is_direct: true,
                     depth: 1,
                     dependent_count: 23,
+                    transitive_dependent_count: 31,
                     is_registry: true,
                 },
                 risk: RiskScore {
@@ -776,6 +780,7 @@ mod tests {
                     is_direct: false,
                     depth: 2,
                     dependent_count: 3,
+                    transitive_dependent_count: 5,
                     is_registry: true,
                 },
                 risk: RiskScore {
@@ -795,6 +800,7 @@ mod tests {
                     is_direct: true,
                     depth: 1,
                     dependent_count: 1,
+                    transitive_dependent_count: 1,
                     is_registry: true,
                 },
                 risk: RiskScore {

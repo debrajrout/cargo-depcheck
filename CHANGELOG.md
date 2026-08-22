@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — BREAKING
+
+- **The graph-weight multiplier is now absolute, not relative to your own
+  project.** Previously `1.0 + dependent_count / max_dependents_in_this_project`,
+  so the same crate in the same state could score up to 85% higher in a
+  smaller project purely because that project's *unrelated* most-depended-on
+  crate happened to have fewer dependents. It's now a saturating function of
+  the crate's own transitive dependent count alone —
+  `1.0 + ln(1+n) / (ln(1+n) + 4)` — identical for a given count everywhere,
+  and monotonic (adding a dependency can no longer lower another crate's
+  score). See the README's "How scoring works" section for the formula and
+  worked examples.
+- **Graph weight now uses the transitive reverse-dependency closure, not
+  just direct parents.** A crate with few direct dependents that sits
+  underneath something widely used (e.g. `scopeguard`: 1 direct dependent
+  but 53 transitive, in this project) now gets credit for its real blast
+  radius instead of being scored as if it were a leaf. `graph.rs` computes
+  this once per run (O(V·(V+E)), fine at real dependency-graph scale). The
+  "relied on by N crates" report line and JSON's new
+  `transitive_dependent_count` field both use this number now;
+  `dependent_count` (direct only) is still reported alongside it.
+- `--json` `schema_version` bumped to **2** for both changes above.
+- CRITICAL (>70) / WARN (40-70) bands are **unchanged** — deliberately, not
+  by oversight. The practical ceiling of the new multiplier is lower for
+  very large graphs (~1.6-1.8 in practice vs. a hard 2.0 before), but
+  re-tuning severity bands without real usage data would be guessing; that
+  belongs with the "scoring feedback" work in CONTRIBUTING.md once there's
+  data to tune against.
+
 ### Added
 
 - Official GitHub Action (`action.yml`): downloads a prebuilt binary for

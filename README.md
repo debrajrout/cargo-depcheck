@@ -106,9 +106,33 @@ Every crate gets 0–100 points from three signals, then multiplied by graph wei
 | Security | 50 | RustSec advisories (CVE severity, unmaintained) |
 | Version lag | 25 | Major/minor versions behind latest stable |
 | Maintenance | 15 | Days since last crates.io publish (cap: 2 years) |
-| **× Graph weight** | 1.0–2.0 | More dependents → higher urgency |
+| **× Graph weight** | 1.0–2.0 | More things depend on it → higher urgency |
 
 A stale leaf at the edge of your tree scores lower than the same stale crate holding up 30 others. That's the point.
+
+**Graph weight is absolute, not relative to your project.** It's a
+saturating function of how many crates depend on this one — directly or
+transitively, so a crate with few direct dependents that sit underneath
+something widely used still gets credit for its real blast radius:
+
+```text
+weight(n) = 1.0 + ln(1 + n) / (ln(1 + n) + 4)
+```
+
+| Transitive dependents | Weight |
+|---|---|
+| 0 | 1.00 |
+| 5 | 1.31 |
+| 20 | 1.43 |
+| 100 | 1.54 |
+| 1000 | 1.63 |
+
+The same crate in the same state scores identically no matter what else is
+in your dependency tree — earlier versions computed this relative to your
+project's single most-depended-on crate, which meant the same crate could
+score up to 85% higher in a smaller project purely because of an unrelated
+crate elsewhere in the tree. `--threshold` now means the same thing in
+every project.
 
 ---
 

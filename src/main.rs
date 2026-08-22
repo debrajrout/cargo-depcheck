@@ -144,7 +144,6 @@ async fn main() -> Result<()> {
 
     // ── Phase 4: compute risk scores ─────────────────────────────────────────
     let now = Utc::now();
-    let max_dependents = nodes.iter().map(|n| n.dependent_count).max().unwrap_or(0);
 
     // Each node's advisories are looked up exactly once here — previously
     // `advisories::index()` did a full pass over every node just to report
@@ -160,13 +159,7 @@ async fn main() -> Result<()> {
                 .as_ref()
                 .map(|database| advisories::lookup(database, &node.name, &node.version))
                 .unwrap_or_default();
-            let risk = score::compute(
-                &node,
-                meta_map.get(&node.name),
-                &node_advisories,
-                max_dependents,
-                now,
-            );
+            let risk = score::compute(&node, meta_map.get(&node.name), &node_advisories, now);
             report::Finding {
                 node,
                 risk,

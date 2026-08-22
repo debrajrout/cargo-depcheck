@@ -14,6 +14,11 @@ pub struct DependencyNode {
     pub depth: usize,
     /// Number of packages in the tree that directly depend on this one.
     pub dependent_count: usize,
+    /// Number of DISTINCT packages that depend on this one directly OR
+    /// transitively — the true "blast radius" if this crate broke.
+    /// `dependent_count` alone understates impact for a crate whose direct
+    /// dependents are themselves widely depended upon further up the tree.
+    pub transitive_dependent_count: usize,
     /// True if this package is published on crates.io. Git and path
     /// dependencies never have crates.io metadata, so callers must not
     /// treat their absence as a fetch failure.
@@ -89,6 +94,23 @@ pub fn from_metadata(metadata: &cargo_metadata::Metadata) -> Result<Vec<Dependen
         .flat_map(|id| children.get(id).into_iter().flatten().copied())
         .collect();
 
+    // Transitive reverse-dependency closure: for each package, every other
+    // package reachable by walking `parents` upward. This is an O(V*(V+E))
+    // pass, which is fine at the scale a dependency graph actually reaches
+    // (hundreds, occasionally low thousands, of nodes).
+    let mut transitive_dependents: HashMap<&PackageId, usize> = HashMap::new();
+    for id in resolve.nodes.iter().map(|n| &n.id) {
+        let mut seen: HashSet<&PackageId> = HashSet::new();
+        let mut queue: VecDeque<&PackageId> =
+            parents.get(id).into_iter().flatten().copied().collect();
+        while let Some(p) = queue.pop_front() {
+            if seen.insert(p) {
+                queue.extend(parents.get(p).into_iter().flatten().copied());
+            }
+        }
+        transitive_dependents.insert(id, seen.len());
+    }
+
     let package_map: HashMap<&PackageId, &cargo_metadata::Package> =
         metadata.packages.iter().map(|p| (&p.id, p)).collect();
 
@@ -106,6 +128,7 @@ pub fn from_metadata(metadata: &cargo_metadata::Metadata) -> Result<Vec<Dependen
                 is_direct: direct_ids.contains(&n.id),
                 depth,
                 dependent_count: parents.get(&n.id).map_or(0, |v| v.len()),
+                transitive_dependent_count: transitive_dependents.get(&n.id).copied().unwrap_or(0),
                 is_registry: pkg.source.as_ref().is_some_and(|s| s.is_crates_io()),
             })
         })
@@ -161,6 +184,44 @@ mod tests {
         let leaf = find(&nodes, "chain-leaf");
         assert_eq!(mid.depth, 1);
         assert_eq!(leaf.depth, 2);
+    }
+
+    #[test]
+    fn transitive_dependent_count_includes_the_whole_upward_chain() {
+        // chain-leaf's only direct parent is chain-mid, but chain-mid is
+        // itself depended on by the workspace root — so breaking chain-leaf
+        // has a larger blast radius (2: mid + root) than its direct count
+        // (1) suggests. This is exactly the gap dependent_count alone
+        // can't see, and why the graph multiplier now uses this instead.
+        let metadata = load_fixture("chain");
+        let nodes = from_metadata(&metadata).unwrap();
+
+        let mid = find(&nodes, "chain-mid");
+        let leaf = find(&nodes, "chain-leaf");
+        assert_eq!(mid.dependent_count, 1);
+        assert_eq!(mid.transitive_dependent_count, 1);
+        assert_eq!(leaf.dependent_count, 1);
+        assert_eq!(
+            leaf.transitive_dependent_count, 2,
+            "leaf's blast radius must include both mid and the root that depends on mid"
+        );
+    }
+
+    #[test]
+    fn transitive_dependent_count_is_never_less_than_direct() {
+        for fixture in ["chain", "dep-kinds", "multi-member"] {
+            let metadata = load_fixture(fixture);
+            let nodes = from_metadata(&metadata).unwrap();
+            for n in &nodes {
+                assert!(
+                    n.transitive_dependent_count >= n.dependent_count,
+                    "{} in {fixture}: transitive {} < direct {}",
+                    n.name,
+                    n.transitive_dependent_count,
+                    n.dependent_count
+                );
+            }
+        }
     }
 
     #[test]

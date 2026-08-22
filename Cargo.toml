@@ -1,6 +1,6 @@
 [package]
 name = "cargo-depcheck"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.91"
 description = "Ranked dependency health report — security advisories, version lag, and maintenance signals weighted by graph depth"
@@ -10,7 +10,7 @@ homepage = "https://github.com/debrajrout/cargo-depcheck"
 documentation = "https://github.com/debrajrout/cargo-depcheck#readme"
 readme = "README.md"
 keywords = ["cargo", "dependencies", "security", "audit", "maintenance"]
-categories = ["command-line-utilities", "development-tools"]
+categories = ["command-line-utilities", "development-tools::cargo-plugins"]
 exclude = [".github/", "tests/fixtures/"]
 
 [dependencies]

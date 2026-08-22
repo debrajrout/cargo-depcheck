@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Fixed `categories` in `Cargo.toml`: was `["command-line-utilities",
+  "development-tools"]`, now includes the canonical
+  `development-tools::cargo-plugins` slug — where cargo-audit, cargo-deny,
+  cargo-outdated, and other cargo plugins actually live on crates.io. Also
+  gets free indexing on lib.rs.
+
 - Release binaries now target what people actually download. Independent
   GitHub Release asset data from cargo-machete and cargo-deny both show
   ~86-90% of installs are `x86_64-unknown-linux-musl` — not

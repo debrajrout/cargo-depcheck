@@ -25,14 +25,18 @@ pub struct DependencyNode {
     pub is_registry: bool,
 }
 
-pub fn load(manifest_path: Option<&Path>) -> Result<Vec<DependencyNode>> {
+/// Returns the dependency nodes and the workspace root (where `Cargo.lock`
+/// lives — needed by `--format sarif` to anchor `locations[]`).
+pub fn load(manifest_path: Option<&Path>) -> Result<(Vec<DependencyNode>, std::path::PathBuf)> {
     let mut cmd = MetadataCommand::new();
     if let Some(path) = manifest_path {
         cmd.manifest_path(path);
     }
 
     let metadata = cmd.exec().context("failed to run `cargo metadata`")?;
-    from_metadata(&metadata)
+    let workspace_root = metadata.workspace_root.clone().into_std_path_buf();
+    let nodes = from_metadata(&metadata)?;
+    Ok((nodes, workspace_root))
 }
 
 /// Pure transformation from a resolved `cargo metadata` graph to our own

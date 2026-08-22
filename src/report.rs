@@ -552,7 +552,7 @@ fn score_bar(score: f64, width: usize) -> String {
     format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
 }
 
-fn reason_lines(
+pub(crate) fn reason_lines(
     node: &DependencyNode,
     risk: &RiskScore,
     advisories: &[Advisory],

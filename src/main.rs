@@ -11,6 +11,7 @@ mod cli;
 mod graph;
 mod registry;
 mod report;
+mod sarif;
 mod score;
 
 #[tokio::main]
@@ -21,25 +22,32 @@ async fn main() -> Result<()> {
 
     resolve_color(args.color);
 
-    let json_mode = args.json;
+    let format = args.format.unwrap_or(if args.json {
+        cli::OutputFormat::Json
+    } else {
+        cli::OutputFormat::Human
+    });
+    // JSON and SARIF are both machine-readable: progress goes to stderr so
+    // stdout stays clean for the payload, same convention as plain --json.
+    let machine_readable = !matches!(format, cli::OutputFormat::Human);
     let quiet = args.quiet;
     let ignore: HashSet<String> = args.ignore.into_iter().collect();
 
     if args.no_advisories && args.no_fetch {
         status_print(
-            json_mode,
+            machine_readable,
             quiet,
             "note: --no-fetch has no effect with --no-advisories",
         );
     }
 
     status_print(
-        json_mode,
+        machine_readable,
         quiet,
         format!("cargo-depcheck v{}", env!("CARGO_PKG_VERSION")).bold(),
     );
     status_print(
-        json_mode,
+        machine_readable,
         quiet,
         format!(
             "Analyzing {}...\n",
@@ -48,14 +56,14 @@ async fn main() -> Result<()> {
     );
 
     // ── Phase 1: parse the dependency graph ─────────────────────────────────
-    let nodes = graph::load(args.manifest_path.as_deref())?;
+    let (nodes, workspace_root) = graph::load(args.manifest_path.as_deref())?;
 
     let direct = nodes.iter().filter(|n| n.is_direct).count();
     let transitive = nodes.len() - direct;
     let total_dependencies = nodes.len();
 
     status_print(
-        json_mode,
+        machine_readable,
         quiet,
         format!(
             "Found {}  ({} direct · {} transitive)\n",
@@ -80,7 +88,7 @@ async fn main() -> Result<()> {
 
     if !unique_names.is_empty() {
         status_print(
-            json_mode,
+            machine_readable,
             quiet,
             format!(
                 "  {} Fetching registry metadata for {} crates...",
@@ -116,7 +124,7 @@ async fn main() -> Result<()> {
     if !unchecked.is_empty() {
         let sample: Vec<String> = unchecked.iter().take(3).cloned().collect();
         status_print(
-            json_mode,
+            machine_readable,
             quiet,
             report::degraded_warning(unchecked.len(), attempted, &sample, last_error.as_deref()),
         );
@@ -127,7 +135,7 @@ async fn main() -> Result<()> {
         None
     } else {
         status_print(
-            json_mode,
+            machine_readable,
             quiet,
             format!("  {} Fetching RustSec advisory database...", "⠋".cyan()),
         );
@@ -175,7 +183,7 @@ async fn main() -> Result<()> {
             .map(|f| f.node.name.as_str())
             .collect();
         status_print(
-            json_mode,
+            machine_readable,
             quiet,
             format!(
                 "\r  {} RustSec advisory database ready  ({} affected)",
@@ -215,28 +223,37 @@ async fn main() -> Result<()> {
     let summary = report::summarize(total_dependencies, critical, warnings, unknown);
 
     // ── Phase 5: render report ───────────────────────────────────────────────
-    if json_mode {
-        let json_report = report::to_json(
-            &findings,
-            &meta_map,
-            now,
-            &summary,
-            args.threshold,
-            &unchecked,
-            duplicates,
-        );
-        let output = report::render_json(&json_report)?;
-        println!("{output}");
-    } else {
-        report::render(
-            &findings,
-            &meta_map,
-            now,
-            &summary,
-            args.quiet,
-            args.threshold,
-            &duplicates,
-        );
+    match format {
+        cli::OutputFormat::Json => {
+            let json_report = report::to_json(
+                &findings,
+                &meta_map,
+                now,
+                &summary,
+                args.threshold,
+                &unchecked,
+                duplicates,
+            );
+            let output = report::render_json(&json_report)?;
+            println!("{output}");
+        }
+        cli::OutputFormat::Sarif => {
+            let lockfile_path = workspace_root.join("Cargo.lock");
+            let sarif_log = sarif::build(&findings, &meta_map, now, &lockfile_path);
+            let output = sarif::render(&sarif_log)?;
+            println!("{output}");
+        }
+        cli::OutputFormat::Human => {
+            report::render(
+                &findings,
+                &meta_map,
+                now,
+                &summary,
+                args.quiet,
+                args.threshold,
+                &duplicates,
+            );
+        }
     }
 
     // Exit code contract: 0 clean · 1 a finding at/above --fail-on is
@@ -275,11 +292,11 @@ fn exit_code(
     i32::from(triggered)
 }
 
-fn status_print(json_mode: bool, quiet: bool, message: impl std::fmt::Display) {
+fn status_print(machine_readable: bool, quiet: bool, message: impl std::fmt::Display) {
     if quiet {
         return;
     }
-    if json_mode {
+    if machine_readable {
         eprintln!("{message}");
     } else {
         println!("{message}");

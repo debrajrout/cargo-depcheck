@@ -77,7 +77,8 @@ Direct dependencies appear **bold** in the report.
 | `--threshold 30` | Show anything scoring ≥ 30 (default: 40) |
 | `--ignore foo` | Skip a crate — repeat for multiple |
 | `--quiet` | Summary line only |
-| `--json` | CI-friendly JSON on stdout (progress on stderr) |
+| `--json` | CI-friendly JSON on stdout (progress on stderr) — alias for `--format json` |
+| `--format <human\|json\|sarif>` | Output format. `sarif` targets GitHub code scanning and similar tools |
 | `--no-advisories` | Skip RustSec — version/maintenance only |
 | `--no-fetch` | Use cached advisory DB, no git pull |
 | `--manifest-path PATH` | Point at another project |
@@ -181,6 +182,25 @@ It writes a summary table to the job summary and exposes `critical`,
 All CLI flags are available as inputs: `manifest-path`, `threshold`,
 `ignore` (space-separated), `allow-incomplete`, and `summary` (set to
 `false` to skip the job-summary table).
+
+**SARIF upload to the Security tab:**
+
+```yaml
+permissions:
+  security-events: write   # required for the SARIF upload step
+
+steps:
+  - uses: debrajrout/cargo-depcheck@v1
+    with:
+      sarif: true
+      fail-on: none   # let the Security tab show findings even on a clean job
+```
+
+The upload happens before `fail-on` can fail the job, so findings still
+reach the Security tab even when the job itself fails. Every finding gets
+a `security-severity` GitHub can sort by — including ones with no CVSS
+score, which is the majority of RustSec's database (see "How scoring
+works" above).
 
 ## CI without the Action
 

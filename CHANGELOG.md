@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **SARIF 2.1.0 output** (`--format sarif`, alongside `--format human|json`;
+  `--json` remains a working alias for `--format json`). Hand-rolled rather
+  than built on `serde-sarif`, matching cargo-audit's own approach and this
+  project's lean-dependency-tree goal. Every result gets a real
+  `locations[]` entry — the exact `Cargo.lock` line for that package, not a
+  fixed placeholder — plus `partialFingerprints` and a `security-severity`
+  populated from depcheck's composite score. That last part is the concrete
+  differentiator: cargo-audit can only populate `security-severity` from
+  CVSS, which 65% of RustSec advisories don't have; depcheck populates it
+  for every finding. The GitHub Action gained a `sarif` input that uploads
+  via `github/codeql-action/upload-sarif` before the `fail-on` gate can
+  fail the job, so findings still reach the Security tab either way.
+
 ### Changed — BREAKING
 
 - **Version-lag scoring now follows Cargo's own compatibility rule.**

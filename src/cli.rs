@@ -34,9 +34,15 @@ pub struct Args {
     #[arg(long = "ignore", value_name = "CRATE")]
     pub ignore: Vec<String>,
 
-    /// Machine-readable JSON output on stdout (progress goes to stderr)
+    /// Machine-readable JSON output on stdout (progress goes to stderr).
+    /// Deprecated alias for --format json; kept for compatibility.
     #[arg(long)]
     pub json: bool,
+
+    /// Output format. `sarif` is SARIF 2.1.0, for GitHub code scanning and
+    /// similar tools (progress goes to stderr, same as `json`).
+    #[arg(long, value_enum)]
+    pub format: Option<OutputFormat>,
 
     /// Skip RustSec advisory lookup entirely
     #[arg(long)]
@@ -89,4 +95,14 @@ pub enum ColorChoice {
     Always,
     /// Never colorize
     Never,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum OutputFormat {
+    /// Terminal report (boxes, colors)
+    Human,
+    /// Versioned JSON on stdout
+    Json,
+    /// SARIF 2.1.0 on stdout, for GitHub code scanning and similar tools
+    Sarif,
 }

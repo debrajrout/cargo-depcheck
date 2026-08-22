@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Release binaries now target what people actually download. Independent
+  GitHub Release asset data from cargo-machete and cargo-deny both show
+  ~86-90% of installs are `x86_64-unknown-linux-musl` — not
+  `x86_64-unknown-linux-gnu`, which is what this project built before.
+  `aarch64-unknown-linux-musl` is now also built (previously missing
+  entirely); `x86_64-apple-darwin` — under 0.5% of real demand — is kept
+  but deprioritized rather than dropped. Cross-compilation for the musl and
+  aarch64-linux targets is automatic via `taiki-e/upload-rust-binary-action`
+  (it installs and uses `cross`), no extra toolchain step needed.
+
 ### Added
 
 - Integration test harness: `graph.rs` (previously untested) now has unit

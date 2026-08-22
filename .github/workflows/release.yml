@@ -25,21 +25,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Ordered by real-world demand: independent asset-download data from
+        # cargo-machete and cargo-deny both show ~86-90% of installs are
+        # x86_64-unknown-linux-musl, with aarch64-linux, Windows, and
+        # aarch64-macOS each in the low single digits, and x86_64-macOS under
+        # 0.5%. musl (not gnu) is what's actually downloaded on Linux — likely
+        # because musl binaries run unmodified on Alpine/scratch containers
+        # and don't depend on the host's glibc version.
         include:
-          - target: x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+      # musl and cross-arch-linux targets are cross-compiled automatically
+      # via `cross` (this action installs it if missing); Windows and macOS
+      # targets build natively on their own runner.
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: cargo-depcheck

@@ -16,15 +16,18 @@ One command. One ranked report. Start at the top.
 
 ## Try it
 
+Not yet published to crates.io, so `cargo install cargo-depcheck` isn't
+live yet — install straight from GitHub instead:
+
 ```sh
-cargo install cargo-depcheck   # or clone & build below
+cargo install --git https://github.com/debrajrout/cargo-depcheck
 cd your-rust-project
 cargo depcheck
 ```
 
 First run needs network (crates.io's sparse index + RustSec advisory DB). Crate metadata is cached in the same `~/.cargo` index cache your regular `cargo` commands already use, and the advisory DB is cached at `~/.cargo/advisory-db`. Once both are warm, `--offline` skips the network entirely.
 
-**From source:**
+**From a local clone** (for building from a branch, or contributing):
 
 ```sh
 git clone https://github.com/debrajrout/cargo-depcheck
@@ -39,24 +42,44 @@ cargo install --path .
 
 ## What you get
 
+Real output from running `cargo depcheck` against this repo's own dependency tree:
+
 ```
 $ cargo depcheck
 
-Found 366 dependencies  (12 direct · 354 transitive)
+Found 349 dependencies  (17 direct · 332 transitive)
 
   ✓ RustSec advisory database ready  (2 affected)
-  0 critical  ·  0 warnings  ·  366 healthy
+  0 critical  ·  4 warnings  ·  345 healthy
+  ⚠ 9 crates resolve at multiple versions: bitflags (1.3.2, 2.13.0), cpufeatures (0.2.17, 0.3.0), getrandom (0.2.17, 0.4.3) (+ 6 more)
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  WARN                                                                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ openssl 0.10.45                            94 [W] ████████████              │
-│   advisory: RUSTSEC-2023-0044                                               │
-│   3 major version(s) behind latest (0.10.45 → 3.0.0)                        │
-│   last published 2 years ago                                                │
-│   relied on by 23 crates in your graph                                      │
+│ wasi 0.11.1+wasi-snapshot-preview1        46 [W] ██████░░░░░░               │
+│   3 breaking version(s) behind latest (0.11.1+wasi-snapshot-preview1 → 0.14.7+wasi-0.2.4)│
+│   last published 340 days ago                                               │
+│   relied on by 25 crates in your graph, directly or transitively            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ allocator-api2 0.2.21                     45 [W] █████░░░░░░░               │
+│   2 breaking version(s) behind latest (0.2.21 → 0.4.0)                      │
+│   last published 254 days ago                                               │
+│   relied on by 37 crates in your graph, directly or transitively            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ windows-sys 0.52.0                        45 [W] █████░░░░░░░               │
+│   9 breaking version(s) behind latest (0.52.0 → 0.61.2)                     │
+│   last published 320 days ago                                               │
+│   relied on by 15 crates in your graph, directly or transitively            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ crossbeam-epoch 0.9.18                    42 [W] █████░░░░░░░               │
+│   advisory: RUSTSEC-2026-0204                                               │
+│   2 patch version(s) behind latest (0.9.18 → 0.9.20)                        │
+│   last published 47 days ago                                                │
+│   relied on by 6 crates in your graph, directly or transitively             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+(`wasi`'s reason line runs past the box's right border — a real terminal-width limitation for very long version strings, not a rendering bug we've hidden here.)
 
 Each finding shows **why** it ranked where it did — not just a version number in a table.
 
@@ -96,9 +119,9 @@ through a color-stripping pipe, or with `--color never`.
 
 ```sh
 cargo depcheck --threshold 30              # see lower-scoring issues
-cargo depcheck --ignore number_prefix      # mute a known false positive
+cargo depcheck --ignore libc               # suppress one crate you've already triaged
 cargo depcheck --json --threshold 70 > report.json
-cargo depcheck --quiet                     # 2 critical · 6 warnings · 239 healthy
+cargo depcheck --quiet                     # 0 critical  ·  4 warnings  ·  341 healthy
 ```
 
 Run `cargo depcheck --help` for the full list.
@@ -115,9 +138,10 @@ cargo depcheck completions fish > ~/.config/fish/completions/cargo-depcheck.fish
 cargo depcheck mangen > /usr/local/share/man/man1/cargo-depcheck.1   # then: man cargo-depcheck
 ```
 
-`elvish` and `powershell` are also supported. Release archives from
-[Releases](https://github.com/debrajrout/cargo-depcheck/releases) ship
-pre-generated copies of both, under `completions/` and `cargo-depcheck.1`.
+`elvish` and `powershell` are also supported. Once a release is tagged,
+its archives on [Releases](https://github.com/debrajrout/cargo-depcheck/releases)
+will include pre-generated copies of both, under `completions/` and
+`cargo-depcheck.1` — see [release.yml](.github/workflows/release.yml).
 
 ---
 
@@ -211,6 +235,11 @@ every project.
 
 ## GitHub Actions
 
+No tagged release exists yet, so `@v1` below isn't resolvable today — this
+is the interface [action.yml](action.yml) implements and what a `v1` tag
+will point at once one is cut. Pin to a commit SHA in the meantime if you
+want to use it before then.
+
 The official action downloads a prebuilt binary — no `cargo install` source
 build in your CI:
 
@@ -231,9 +260,11 @@ It writes a summary table to the job summary and exposes `critical`,
 - run: echo "found ${{ steps.depcheck.outputs.critical }} critical issues"
 ```
 
-All CLI flags are available as inputs: `manifest-path`, `threshold`,
-`ignore` (space-separated), `allow-incomplete`, and `summary` (set to
-`false` to skip the job-summary table).
+Beyond `fail-on` and `sarif` (above), the action also takes `version`
+(pin a specific release), `manifest-path`, `threshold`, `ignore`
+(space-separated), `allow-incomplete`, and `summary` (set to `false` to
+skip the job-summary table) — see [action.yml](action.yml) for the full
+input list; not every CLI flag has an action input yet.
 
 **SARIF upload to the Security tab:**
 
@@ -257,7 +288,7 @@ works" above).
 ## CI without the Action
 
 ```yaml
-- run: cargo install cargo-depcheck
+- run: cargo install --git https://github.com/debrajrout/cargo-depcheck   # cargo install cargo-depcheck, once published
 - run: cargo depcheck --fail-on critical
 ```
 

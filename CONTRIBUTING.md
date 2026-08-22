@@ -236,8 +236,13 @@ These match how the existing code is written:
 ### Design decisions — please don't reverse without discussion
 
 - Use `cargo_metadata`, not raw `Cargo.lock` parsing (need dependency edges)
-- Only **Normal** dependency edges for depth and `dependent_count`
-- crates.io concurrency capped at **5** (rate limit friendly)
+- **Normal** dependency edges only for depth and `dependent_count` by
+  default; `--include-build`/`--include-dev` opt into Build/Dev edges too
+  (see `graph::KindOptions`), but the default graph never changes shape
+  based on those flags being absent
+- No crates.io fetch concurrency cap — the sparse index (via `tame-index`)
+  has no documented rate limit, unlike the old JSON API this project used
+  to hit; every crate is requested at once
 - Per-crate fetch errors are **silently skipped** (git/path deps won't crash the run)
 - `rustsec` **0.33+** required (CVSS 4.0 advisories in current advisory-db)
 

@@ -57,6 +57,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via `github/codeql-action/upload-sarif` before the `fail-on` gate can
   fail the job, so findings still reach the Security tab either way.
 
+### Documentation
+
+- **Honesty pass on README.md and CONTRIBUTING.md.** All sample output is
+  now copied verbatim from real runs against this repo (previously
+  hand-typed, and drifted from actual wording — e.g. "major version(s)"
+  vs. the real "breaking version(s)"). `cargo install cargo-depcheck` and
+  `uses: debrajrout/cargo-depcheck@v1` are both flagged as not-yet-live
+  (unpublished crate, no tagged release) with a working alternative
+  (`cargo install --git ...`) given instead of a command that just fails.
+  Fixed a false "all CLI flags are available as [Action] inputs" claim,
+  and two stale CONTRIBUTING.md claims left over from the pre-sparse-index
+  registry client (a since-removed 5-way concurrency cap; Normal-only
+  graph edges, now configurable via `--include-build`/`--include-dev`).
+
 ### Removed
 
 - **Unused `indicatif` dependency.** Never referenced anywhere in the

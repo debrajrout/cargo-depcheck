@@ -114,6 +114,11 @@ after consistent helpful participation.
 - Enforce Code of Conduct
 - Make final calls on scoring formula changes and breaking JSON schema bumps
 - Welcome new contributors and unblock stuck PRs
+- After the **first** tagged release exists, create and push a floating
+  `v1` tag pointing at it (`git tag -f v1 v0.2.0 && git push -f origin v1`),
+  and move `v1` forward after each subsequent v1.x.y release. This is what
+  makes `uses: debrajrout/cargo-depcheck@v1` (see `action.yml`, README)
+  resolve to a real release instead of erroring — it doesn't exist yet.
 
 **Becoming a maintainer:** there is no application form. Long-term contributors
 who review others' work, improve docs, and show good judgment may be invited.

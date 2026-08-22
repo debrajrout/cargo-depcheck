@@ -112,7 +112,33 @@ A stale leaf at the edge of your tree scores lower than the same stale crate hol
 
 ---
 
-## CI in 30 seconds
+## GitHub Actions
+
+The official action downloads a prebuilt binary — no `cargo install` source
+build in your CI:
+
+```yaml
+- uses: debrajrout/cargo-depcheck@v1
+  with:
+    fail-on: critical   # none | warn | critical (default: critical)
+```
+
+It writes a summary table to the job summary and exposes `critical`,
+`warnings`, `unknown`, and `healthy` as step outputs for use in later steps:
+
+```yaml
+- uses: debrajrout/cargo-depcheck@v1
+  id: depcheck
+  with:
+    fail-on: none   # don't fail here — decide based on the output instead
+- run: echo "found ${{ steps.depcheck.outputs.critical }} critical issues"
+```
+
+All CLI flags are available as inputs: `manifest-path`, `threshold`,
+`ignore` (space-separated), `allow-incomplete`, and `summary` (set to
+`false` to skip the job-summary table).
+
+## CI without the Action
 
 ```yaml
 - run: cargo install cargo-depcheck

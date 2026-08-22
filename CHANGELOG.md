@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Official GitHub Action (`action.yml`): downloads a prebuilt binary for
+  the runner's platform (never `cargo install`), so it runs in seconds
+  instead of doing a source build. Inputs mirror the CLI flags
+  (`manifest-path`, `threshold`, `fail-on`, `ignore`, `allow-incomplete`);
+  outputs (`critical`, `warnings`, `unknown`, `healthy`, `report-path`) are
+  consumable by later steps, and a Markdown summary table is written to
+  the job summary by default. Verified against the real binary for both
+  the clean and degraded-network paths; full live verification (a real
+  `uses: debrajrout/cargo-depcheck@v1` from another workflow) needs a
+  published release and a maintained `v1` floating tag — see
+  CONTRIBUTING.md's Maintainer section.
+
 ### Changed
 
 - Release workflow now publishes to crates.io automatically after binaries

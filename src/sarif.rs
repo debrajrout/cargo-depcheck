@@ -322,6 +322,7 @@ mod tests {
                 dependent_count: 1,
                 transitive_dependent_count: 1,
                 is_registry: true,
+                kind: crate::graph::NodeKind::Normal,
             },
             risk: RiskScore {
                 security: 0.0,

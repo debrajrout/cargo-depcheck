@@ -437,6 +437,7 @@ mod tests {
             dependent_count,
             transitive_dependent_count,
             is_registry: true,
+            kind: crate::graph::NodeKind::Normal,
         }
     }
 

@@ -62,7 +62,11 @@ async fn main() -> Result<()> {
         locked: args.locked,
         frozen: args.frozen,
     };
-    let (nodes, metadata) = graph::load(args.manifest_path.as_deref(), load_options)?;
+    let kind_options = graph::KindOptions {
+        include_build: args.include_build,
+        include_dev: args.include_dev,
+    };
+    let (nodes, metadata) = graph::load(args.manifest_path.as_deref(), load_options, kind_options)?;
     let workspace_root = metadata.workspace_root.clone().into_std_path_buf();
 
     // [package.metadata.depcheck], falling back to

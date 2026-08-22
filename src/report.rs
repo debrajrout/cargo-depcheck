@@ -100,6 +100,10 @@ pub struct JsonFinding {
     pub is_direct: bool,
     pub dependent_count: usize,
     pub transitive_dependent_count: usize,
+    /// `"normal"`, `"build"`, or `"dev"` — see `graph::NodeKind`. Only
+    /// `"build"`/`"dev"` findings appear when `--include-build`/
+    /// `--include-dev` is passed; `"normal"` is always eligible.
+    pub kind: &'static str,
     pub components: JsonComponents,
     pub reasons: Vec<String>,
     pub advisories: Vec<String>,
@@ -460,6 +464,7 @@ fn json_finding(
         score: round1(finding.risk.total),
         level: finding.risk.level.as_str(),
         is_direct: finding.node.is_direct,
+        kind: finding.node.kind.as_str(),
         dependent_count: finding.node.dependent_count,
         transitive_dependent_count: finding.node.transitive_dependent_count,
         components: JsonComponents {
@@ -585,6 +590,22 @@ pub(crate) fn reason_lines(
     now: DateTime<Utc>,
 ) -> Vec<String> {
     let mut lines = Vec::new();
+
+    match node.kind {
+        crate::graph::NodeKind::Build => {
+            lines.push(
+                "build-only: runs at build time (build.rs), never shipped in your binary"
+                    .to_string(),
+            );
+        }
+        crate::graph::NodeKind::Dev => {
+            lines.push(
+                "dev-only: used for tests/examples/benchmarks, never shipped in your binary"
+                    .to_string(),
+            );
+        }
+        crate::graph::NodeKind::Normal => {}
+    }
 
     for advisory in advisories {
         lines.push(advisory_line(advisory));
@@ -791,6 +812,7 @@ mod tests {
                 dependent_count: 0,
                 transitive_dependent_count: 0,
                 is_registry: true,
+                kind: crate::graph::NodeKind::Normal,
             },
             risk: RiskScore {
                 security: 0.0,
@@ -900,6 +922,7 @@ mod tests {
                     dependent_count: 23,
                     transitive_dependent_count: 31,
                     is_registry: true,
+                    kind: crate::graph::NodeKind::Normal,
                 },
                 risk: RiskScore {
                     security: 0.0,
@@ -920,6 +943,7 @@ mod tests {
                     dependent_count: 3,
                     transitive_dependent_count: 5,
                     is_registry: true,
+                    kind: crate::graph::NodeKind::Normal,
                 },
                 risk: RiskScore {
                     security: 0.0,
@@ -940,6 +964,7 @@ mod tests {
                     dependent_count: 1,
                     transitive_dependent_count: 1,
                     is_registry: true,
+                    kind: crate::graph::NodeKind::Normal,
                 },
                 risk: RiskScore {
                     security: 0.0,

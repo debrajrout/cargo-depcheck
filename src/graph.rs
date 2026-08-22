@@ -23,6 +23,41 @@ pub struct DependencyNode {
     /// dependencies never have crates.io metadata, so callers must not
     /// treat their absence as a fetch failure.
     pub is_registry: bool,
+    /// How this crate is used. `Normal` if it ships with the built crate
+    /// (via any path); otherwise the strongest reason it appears at all —
+    /// see `NodeKind`'s ordering.
+    pub kind: NodeKind,
+}
+
+/// Why a dependency appears in the graph. A single crate can be pulled in
+/// multiple ways (e.g. a normal dep of one package and a dev-dep of
+/// another); `Normal` always wins that classification since it's the
+/// strictly broader risk (ships with the built crate, not just at
+/// build/test time), then `Build` over `Dev` since a build script runs
+/// arbitrary code on every build, not just during `cargo test`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NodeKind {
+    Dev,
+    Build,
+    Normal,
+}
+
+impl NodeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NodeKind::Normal => "normal",
+            NodeKind::Build => "build",
+            NodeKind::Dev => "dev",
+        }
+    }
+}
+
+/// Which non-`Normal` dependency kinds to additionally include. `Normal`
+/// (runtime) dependencies are always followed regardless of these flags.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct KindOptions {
+    pub include_build: bool,
+    pub include_dev: bool,
 }
 
 /// Which cargo-standard consistency flags to pass through to the
@@ -42,6 +77,7 @@ pub struct LoadOptions {
 pub fn load(
     manifest_path: Option<&Path>,
     options: LoadOptions,
+    kinds: KindOptions,
 ) -> Result<(Vec<DependencyNode>, cargo_metadata::Metadata)> {
     let mut cmd = MetadataCommand::new();
     if let Some(path) = manifest_path {
@@ -64,7 +100,7 @@ pub fn load(
     }
 
     let metadata = cmd.exec().context("failed to run `cargo metadata`")?;
-    let nodes = from_metadata(&metadata)?;
+    let nodes = from_metadata(&metadata, kinds)?;
     Ok((nodes, metadata))
 }
 
@@ -72,7 +108,10 @@ pub fn load(
 /// `DependencyNode`s — split out from `load()` so it can be exercised
 /// directly against fixture JSON in tests, with no `cargo metadata`
 /// subprocess (and therefore no network) involved.
-pub fn from_metadata(metadata: &cargo_metadata::Metadata) -> Result<Vec<DependencyNode>> {
+pub fn from_metadata(
+    metadata: &cargo_metadata::Metadata,
+    kinds: KindOptions,
+) -> Result<Vec<DependencyNode>> {
     let resolve = metadata
         .resolve
         .as_ref()
@@ -80,23 +119,57 @@ pub fn from_metadata(metadata: &cargo_metadata::Metadata) -> Result<Vec<Dependen
 
     let workspace_ids: HashSet<&PackageId> = metadata.workspace_members.iter().collect();
 
-    // Build forward edges (what each package pulls in) and reverse edges (who pulls each package in).
-    // We only follow Normal dependency edges here. Dev and build deps don't ship with the crate,
-    // so they shouldn't inflate depth or dependent counts for the packages beneath them.
+    // Build forward edges (what each package pulls in) and reverse edges
+    // (who pulls each package in). Normal edges are always followed; Build
+    // and Dev edges are followed only when explicitly requested, since
+    // neither ships with the built crate. `kind_map` records, for every
+    // package that ends up in the graph, the strongest reason it's there
+    // (see `NodeKind`'s ordering) — independent of which edge a BFS
+    // happens to discover it through first.
     let mut children: HashMap<&PackageId, Vec<&PackageId>> = HashMap::new();
     let mut parents: HashMap<&PackageId, Vec<&PackageId>> = HashMap::new();
+    let mut kind_map: HashMap<&PackageId, NodeKind> = HashMap::new();
 
     for node in &resolve.nodes {
-        let normal_deps: Vec<&PackageId> = node
-            .deps
-            .iter()
-            .filter(|d| d.dep_kinds.iter().any(|k| k.kind == DependencyKind::Normal))
-            .map(|d| &d.pkg)
-            .collect();
+        let mut included: Vec<&PackageId> = Vec::new();
 
-        children.insert(&node.id, normal_deps.clone());
+        for dep in &node.deps {
+            let dep_kind = if dep
+                .dep_kinds
+                .iter()
+                .any(|k| k.kind == DependencyKind::Normal)
+            {
+                Some(NodeKind::Normal)
+            } else if kinds.include_build
+                && dep
+                    .dep_kinds
+                    .iter()
+                    .any(|k| k.kind == DependencyKind::Build)
+            {
+                Some(NodeKind::Build)
+            } else if kinds.include_dev
+                && dep
+                    .dep_kinds
+                    .iter()
+                    .any(|k| k.kind == DependencyKind::Development)
+            {
+                Some(NodeKind::Dev)
+            } else {
+                None
+            };
 
-        for dep_id in normal_deps {
+            let Some(dep_kind) = dep_kind else { continue };
+
+            included.push(&dep.pkg);
+            let entry = kind_map.entry(&dep.pkg).or_insert(dep_kind);
+            if dep_kind > *entry {
+                *entry = dep_kind;
+            }
+        }
+
+        children.insert(&node.id, included.clone());
+
+        for dep_id in included {
             parents.entry(dep_id).or_default().push(&node.id);
         }
     }
@@ -163,6 +236,7 @@ pub fn from_metadata(metadata: &cargo_metadata::Metadata) -> Result<Vec<Dependen
                 dependent_count: parents.get(&n.id).map_or(0, |v| v.len()),
                 transitive_dependent_count: transitive_dependents.get(&n.id).copied().unwrap_or(0),
                 is_registry: pkg.source.as_ref().is_some_and(|s| s.is_crates_io()),
+                kind: kind_map.get(&n.id).copied().unwrap_or(NodeKind::Normal),
             })
         })
         .collect();
@@ -207,7 +281,7 @@ mod tests {
     #[test]
     fn bfs_assigns_increasing_depth_along_a_chain() {
         let metadata = load_fixture("chain");
-        let nodes = from_metadata(&metadata).unwrap();
+        let nodes = from_metadata(&metadata, KindOptions::default()).unwrap();
 
         // The workspace member itself (chain-root) is depth 0 and is never
         // emitted — only its dependencies are.
@@ -227,7 +301,7 @@ mod tests {
         // (1) suggests. This is exactly the gap dependent_count alone
         // can't see, and why the graph multiplier now uses this instead.
         let metadata = load_fixture("chain");
-        let nodes = from_metadata(&metadata).unwrap();
+        let nodes = from_metadata(&metadata, KindOptions::default()).unwrap();
 
         let mid = find(&nodes, "chain-mid");
         let leaf = find(&nodes, "chain-leaf");
@@ -244,7 +318,7 @@ mod tests {
     fn transitive_dependent_count_is_never_less_than_direct() {
         for fixture in ["chain", "dep-kinds", "multi-member"] {
             let metadata = load_fixture(fixture);
-            let nodes = from_metadata(&metadata).unwrap();
+            let nodes = from_metadata(&metadata, KindOptions::default()).unwrap();
             for n in &nodes {
                 assert!(
                     n.transitive_dependent_count >= n.dependent_count,
@@ -260,7 +334,7 @@ mod tests {
     #[test]
     fn direct_vs_transitive_matches_depth_one() {
         let metadata = load_fixture("chain");
-        let nodes = from_metadata(&metadata).unwrap();
+        let nodes = from_metadata(&metadata, KindOptions::default()).unwrap();
 
         let mid = find(&nodes, "chain-mid");
         let leaf = find(&nodes, "chain-leaf");
@@ -271,7 +345,7 @@ mod tests {
     #[test]
     fn dependent_count_reflects_direct_parents_in_the_resolved_graph() {
         let metadata = load_fixture("chain");
-        let nodes = from_metadata(&metadata).unwrap();
+        let nodes = from_metadata(&metadata, KindOptions::default()).unwrap();
 
         // chain-leaf has exactly one parent in the graph: chain-mid.
         let leaf = find(&nodes, "chain-leaf");
@@ -281,7 +355,7 @@ mod tests {
     #[test]
     fn dev_and_build_only_dependencies_are_excluded() {
         let metadata = load_fixture("dep-kinds");
-        let nodes = from_metadata(&metadata).unwrap();
+        let nodes = from_metadata(&metadata, KindOptions::default()).unwrap();
 
         assert!(
             nodes.iter().any(|n| n.name == "normal-dep"),
@@ -298,13 +372,75 @@ mod tests {
     }
 
     #[test]
+    fn normal_dep_is_always_classified_normal() {
+        let metadata = load_fixture("dep-kinds");
+        let nodes = from_metadata(&metadata, KindOptions::default()).unwrap();
+        assert_eq!(find(&nodes, "normal-dep").kind, NodeKind::Normal);
+    }
+
+    #[test]
+    fn include_build_surfaces_build_only_dep_classified_as_build() {
+        let metadata = load_fixture("dep-kinds");
+        let nodes = from_metadata(
+            &metadata,
+            KindOptions {
+                include_build: true,
+                include_dev: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(find(&nodes, "build-only-dep").kind, NodeKind::Build);
+        assert!(
+            nodes.iter().all(|n| n.name != "dev-only-dep"),
+            "--include-build alone must not pull in dev-only deps: {nodes:?}"
+        );
+    }
+
+    #[test]
+    fn include_dev_surfaces_dev_only_dep_classified_as_dev() {
+        let metadata = load_fixture("dep-kinds");
+        let nodes = from_metadata(
+            &metadata,
+            KindOptions {
+                include_build: false,
+                include_dev: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(find(&nodes, "dev-only-dep").kind, NodeKind::Dev);
+        assert!(
+            nodes.iter().all(|n| n.name != "build-only-dep"),
+            "--include-dev alone must not pull in build-only deps: {nodes:?}"
+        );
+    }
+
+    #[test]
+    fn include_build_and_dev_surface_both_with_correct_kinds() {
+        let metadata = load_fixture("dep-kinds");
+        let nodes = from_metadata(
+            &metadata,
+            KindOptions {
+                include_build: true,
+                include_dev: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(find(&nodes, "normal-dep").kind, NodeKind::Normal);
+        assert_eq!(find(&nodes, "build-only-dep").kind, NodeKind::Build);
+        assert_eq!(find(&nodes, "dev-only-dep").kind, NodeKind::Dev);
+    }
+
+    #[test]
     fn unreachable_packages_are_dropped_not_left_at_max_depth() {
         // dev-only-dep and build-only-dep both resolve to depth == usize::MAX
         // internally (never reached by the Normal-edges-only BFS) and must be
         // filtered out of the final output entirely, not emitted with a
         // nonsensical depth.
         let metadata = load_fixture("dep-kinds");
-        let nodes = from_metadata(&metadata).unwrap();
+        let nodes = from_metadata(&metadata, KindOptions::default()).unwrap();
         assert!(nodes.iter().all(|n| n.depth != usize::MAX));
     }
 
@@ -316,7 +452,7 @@ mod tests {
         // dependent_count would silently miss the edge from whichever
         // member isn't treated as a root.
         let metadata = load_fixture("multi-member");
-        let nodes = from_metadata(&metadata).unwrap();
+        let nodes = from_metadata(&metadata, KindOptions::default()).unwrap();
 
         assert!(nodes
             .iter()
@@ -384,7 +520,7 @@ mod tests {
         metadata.packages.push(dup_pkg);
         resolve.nodes.push(dup_node);
 
-        let nodes = from_metadata(&metadata).unwrap();
+        let nodes = from_metadata(&metadata, KindOptions::default()).unwrap();
         let leaf_nodes: Vec<&DependencyNode> =
             nodes.iter().filter(|n| n.name == "chain-leaf").collect();
 

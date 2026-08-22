@@ -88,6 +88,8 @@ Direct dependencies appear **bold** in the report.
 | `--offline` | Use only the local sparse-index cache for crate metadata — no network |
 | `--locked` | Require `Cargo.lock` to be up to date (passed through to `cargo metadata`) |
 | `--frozen` | Require `Cargo.lock` and network access to be untouched — `--offline` + `--locked` combined |
+| `--include-build` | Also report build-script (`build.rs`) dependencies — off by default |
+| `--include-dev` | Also report dev-dependencies (tests/examples/benchmarks) — off by default |
 
 ```sh
 cargo depcheck --threshold 30              # see lower-scoring issues

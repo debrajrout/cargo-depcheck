@@ -89,6 +89,20 @@ pub struct Args {
     /// Equivalent to --locked --offline (passed through to `cargo metadata`)
     #[arg(long)]
     pub frozen: bool,
+
+    /// Also report build-script (build.rs) dependencies. A build script
+    /// runs arbitrary code on your machine and CI at build time, so a
+    /// compromised one is a real supply-chain risk even though it never
+    /// ships in your binary. Off by default to match the tool's existing
+    /// runtime-focused scope.
+    #[arg(long)]
+    pub include_build: bool,
+
+    /// Also report dev-dependencies (test/example/benchmark-only crates).
+    /// These never ship in your binary but do run arbitrary code on your
+    /// machine and CI while testing.
+    #[arg(long)]
+    pub include_dev: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]

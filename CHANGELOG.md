@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--locked` and `--frozen` flags**, passed through to `cargo metadata`
   for reproducible-lockfile workflows (`--frozen` implies `--offline` and
   `--locked`).
+- **`--include-build` and `--include-dev` flags** surface build-script and
+  dev-only dependencies, which are excluded by default. A build script
+  runs arbitrary code on every build and CI run — a supply-chain risk this
+  tool previously couldn't see at all. Each finding's `kind`
+  (`normal`/`build`/`dev`) is in `--json` output and called out in the
+  human report; default behavior (normal deps only) is unchanged.
 - **SARIF 2.1.0 output** (`--format sarif`, alongside `--format human|json`;
   `--json` remains a working alias for `--format json`). Hand-rolled rather
   than built on `serde-sarif`, matching cargo-audit's own approach and this

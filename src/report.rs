@@ -41,6 +41,16 @@ pub struct ReportSummary {
 #[derive(Serialize)]
 pub struct JsonReport {
     pub schema_version: u32,
+    /// This tool's own version — a CI artifact stored for later can't
+    /// otherwise tell which release produced it.
+    pub tool_version: &'static str,
+    /// RFC 3339 timestamp of when this report was generated.
+    pub generated_at: String,
+    pub project: JsonProject,
+    /// SHA-1 of the RustSec advisory database commit this report was
+    /// checked against, if advisories were checked at all (`None` with
+    /// `--no-advisories`, or if the cached-only open couldn't resolve one).
+    pub advisory_db_commit: Option<String>,
     pub summary: JsonSummary,
     pub findings: Vec<JsonFinding>,
     /// Crates resolved at more than one version in the same graph — build
@@ -52,6 +62,13 @@ pub struct JsonReport {
     /// as a finding, so this is the only place a config-file ignore's
     /// `reason` (if any) is visible at all.
     pub ignored: Vec<JsonIgnored>,
+}
+
+#[derive(Serialize)]
+pub struct JsonProject {
+    /// `None` for a virtual workspace manifest (no `[package]` table).
+    pub name: Option<String>,
+    pub manifest_path: String,
 }
 
 #[derive(Serialize)]
@@ -230,6 +247,8 @@ pub struct JsonExtras<'a> {
     pub unchecked: &'a [String],
     pub duplicates: Vec<JsonDuplicate>,
     pub ignored: Vec<(String, Option<String>)>,
+    pub project: JsonProject,
+    pub advisory_db_commit: Option<String>,
 }
 
 pub fn to_json(
@@ -242,6 +261,10 @@ pub fn to_json(
 ) -> JsonReport {
     JsonReport {
         schema_version: JSON_SCHEMA_VERSION,
+        tool_version: env!("CARGO_PKG_VERSION"),
+        generated_at: now.to_rfc3339(),
+        project: extras.project,
+        advisory_db_commit: extras.advisory_db_commit,
         summary: JsonSummary {
             critical: summary.critical,
             warnings: summary.warnings,
@@ -1001,6 +1024,36 @@ mod tests {
             !output.contains('\u{1b}'),
             "uncolored snapshot must contain no ANSI escapes"
         );
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn json_report_snapshot_covers_provenance_shape() {
+        let (findings, meta_map, now, summary) = sample_report();
+        let mut json_report = to_json(
+            &findings,
+            &meta_map,
+            now,
+            &summary,
+            5.0,
+            JsonExtras {
+                unchecked: &[],
+                duplicates: Vec::new(),
+                ignored: Vec::new(),
+                project: JsonProject {
+                    name: Some("sample-project".to_string()),
+                    manifest_path: "/workspace/sample-project/Cargo.toml".to_string(),
+                },
+                advisory_db_commit: Some("abc123def456".to_string()),
+            },
+        );
+        // `generated_at` is real wall-clock time in production (`Utc::now()`
+        // in main.rs); sample_report()'s fixed `now` only happens to make
+        // this particular assertion stable too. Normalize explicitly so the
+        // snapshot can't silently start depending on that coincidence.
+        json_report.generated_at = "REDACTED".to_string();
+
+        let output = render_json(&json_report).unwrap();
         insta::assert_snapshot!(output);
     }
 }

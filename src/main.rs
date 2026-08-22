@@ -285,6 +285,13 @@ async fn main() -> Result<()> {
     // ── Phase 5: render report ───────────────────────────────────────────────
     match format {
         cli::OutputFormat::Json => {
+            let project = report::JsonProject {
+                name: metadata.root_package().map(|p| p.name.to_string()),
+                manifest_path: metadata
+                    .root_package()
+                    .map(|p| p.manifest_path.to_string())
+                    .unwrap_or_else(|| workspace_root.join("Cargo.toml").display().to_string()),
+            };
             let json_report = report::to_json(
                 &findings,
                 &meta_map,
@@ -295,6 +302,8 @@ async fn main() -> Result<()> {
                     unchecked: &unchecked,
                     duplicates,
                     ignored: ignored_with_reason,
+                    project,
+                    advisory_db_commit: db.as_ref().and_then(advisories::commit_hash),
                 },
             );
             let output = report::render_json(&json_report)?;

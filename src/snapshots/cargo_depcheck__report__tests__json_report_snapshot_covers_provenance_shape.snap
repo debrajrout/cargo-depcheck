@@ -1,0 +1,95 @@
+---
+source: src/report.rs
+assertion_line: 1057
+expression: output
+---
+{
+  "schema_version": 2,
+  "tool_version": "0.2.0",
+  "generated_at": "REDACTED",
+  "project": {
+    "name": "sample-project",
+    "manifest_path": "/workspace/sample-project/Cargo.toml"
+  },
+  "advisory_db_commit": "abc123def456",
+  "summary": {
+    "critical": 1,
+    "warnings": 1,
+    "unknown": 0,
+    "healthy": 344,
+    "threshold": 5.0,
+    "degraded": false,
+    "unchecked_sample": [],
+    "unchecked_count": 0
+  },
+  "findings": [
+    {
+      "name": "openssl",
+      "version": "0.10.45",
+      "score": 94.0,
+      "level": "critical",
+      "is_direct": true,
+      "dependent_count": 23,
+      "transitive_dependent_count": 31,
+      "kind": "normal",
+      "components": {
+        "security": 0.0,
+        "version_lag": 25.0,
+        "maintenance": 15.0,
+        "graph_multiplier": 1.8
+      },
+      "reasons": [
+        "3 breaking version(s) behind latest (0.10.45 → 3.0.0)",
+        "last published 2 years ago",
+        "relied on by 31 crates in your graph, directly or transitively"
+      ],
+      "advisories": []
+    },
+    {
+      "name": "tokio",
+      "version": "1.30.0",
+      "score": 55.0,
+      "level": "warn",
+      "is_direct": false,
+      "dependent_count": 3,
+      "transitive_dependent_count": 5,
+      "kind": "normal",
+      "components": {
+        "security": 0.0,
+        "version_lag": 10.0,
+        "maintenance": 2.0,
+        "graph_multiplier": 1.1
+      },
+      "reasons": [
+        "10 minor version(s) behind latest (1.30.0 → 1.40.0)",
+        "last published 10 days ago",
+        "relied on by 5 crates in your graph, directly or transitively"
+      ],
+      "advisories": []
+    },
+    {
+      "name": "libc",
+      "version": "0.2.180",
+      "score": 15.0,
+      "level": "low",
+      "is_direct": true,
+      "dependent_count": 1,
+      "transitive_dependent_count": 1,
+      "kind": "normal",
+      "components": {
+        "security": 0.0,
+        "version_lag": 2.5,
+        "maintenance": 0.4,
+        "graph_multiplier": 1.0
+      },
+      "reasons": [
+        "9 patch version(s) behind latest (0.2.180 → 0.2.189)",
+        "last published 20 days ago",
+        "relied on by 1 crate in your graph, directly or transitively"
+      ],
+      "advisories": []
+    }
+  ],
+  "duplicates": [],
+  "ignored": []
+}

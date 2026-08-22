@@ -251,7 +251,11 @@ No `jq`, no exit-code plumbing — `--fail-on` does it:
 | `2` | Usage error (bad flag or argument) |
 | `3` | crates.io metadata couldn't be fetched for some dependencies — the report is incomplete (see `--allow-incomplete`) |
 
-`--fail-on` accepts `none` (default), `warn`, or `critical`. JSON includes `"schema_version": 1` so scripts can pin against it.
+`--fail-on` accepts `none` (default), `warn`, or `critical`. JSON includes
+`"schema_version": 2` so scripts can pin against it, plus `tool_version`,
+`generated_at`, `project` (name + manifest path), and `advisory_db_commit`
+— everything you need to make sense of a JSON report re-read later,
+without re-running the tool that produced it.
 
 ---
 

@@ -10,14 +10,27 @@ pub fn load() -> Result<Database> {
 }
 
 /// Open the locally cached advisory database without contacting the network.
+///
+/// Goes through `Repository::open` + `Database::load_from_repo` rather than
+/// the simpler `Database::open`, purely so `commit_hash()` below still has
+/// something to report for `--no-fetch` runs — both read the same on-disk
+/// checkout, neither touches the network.
 pub fn load_cached() -> Result<Database> {
     let path = Repository::default_path();
-    Database::open(&path).with_context(|| {
+    let repo = Repository::open(&path).with_context(|| {
         format!(
             "failed to open cached advisory database at {} — run without --no-fetch first",
             path.display()
         )
-    })
+    })?;
+    Database::load_from_repo(&repo).context("failed to load advisories from cached repository")
+}
+
+/// SHA-1 of the advisory database's HEAD commit, for provenance in JSON
+/// output. `None` only if the underlying git metadata couldn't be read.
+pub fn commit_hash(db: &Database) -> Option<String> {
+    db.latest_commit()
+        .map(|commit| commit.commit_id.to_string())
 }
 
 /// Query advisories affecting a specific crate name and resolved version.

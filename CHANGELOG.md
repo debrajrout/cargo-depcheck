@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--locked` and `--frozen` flags**, passed through to `cargo metadata`
   for reproducible-lockfile workflows (`--frozen` implies `--offline` and
   `--locked`).
+- **JSON provenance fields**: `tool_version`, `generated_at`, `project`
+  (name + manifest path), and `advisory_db_commit` (the RustSec database
+  commit checked against, when advisories were checked at all). A stored
+  CI artifact can now answer "which version made this, when, against what,
+  and against which advisory snapshot" without re-running the tool.
+  `schema_version` is unchanged at 2 — additive fields only.
 - **`--include-build` and `--include-dev` flags** surface build-script and
   dev-only dependencies, which are excluded by default. A build script
   runs arbitrary code on every build and CI run — a supply-chain risk this

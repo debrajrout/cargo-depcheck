@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `src/cratesio.rs` renamed to `src/registry.rs`; fetching is now exposed
   behind an `IndexSource` trait so tests can stand in a fixture-backed
   implementation without HTTP mocking.
+- On-disk caching (originally planned as a separate `src/cache.rs`, see
+  IMPLEMENTATION_PLAN.md P1-2) is superseded by the sparse-index migration
+  above: `tame-index` already shares its ETag-validated cache with
+  `~/.cargo`, giving every run a cheap conditional revalidation rather than
+  a TTL-based cache that risks serving stale data. Measured: a
+  never-before-fetched crate takes ~4.5s; the same crate immediately after
+  takes ~0.5s. A bespoke cache layer on top would only duplicate this.
 
 ### Fixed
 

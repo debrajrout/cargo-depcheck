@@ -59,9 +59,7 @@ pub struct Metadata {
     /// `updated_at`, which was bumped by yanks and metadata edits and
     /// couldn't distinguish "abandoned" from "stable and old."
     pub updated_at: DateTime<Utc>,
-    /// Every version of this crate that has been yanked. Not yet consumed
-    /// by scoring — that's P2-2 ("signals the tool currently misses").
-    #[allow(dead_code)]
+    /// Every version of this crate that has been yanked.
     pub yanked_versions: Vec<Version>,
 }
 
@@ -73,7 +71,6 @@ impl Metadata {
             .unwrap_or(&self.newest_version)
     }
 
-    #[allow(dead_code)] // consumed once P2-2 adds yanked-version scoring
     pub fn is_yanked(&self, version: &Version) -> bool {
         self.yanked_versions.contains(version)
     }

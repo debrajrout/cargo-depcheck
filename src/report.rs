@@ -42,6 +42,16 @@ pub struct JsonReport {
     pub schema_version: u32,
     pub summary: JsonSummary,
     pub findings: Vec<JsonFinding>,
+    /// Crates resolved at more than one version in the same graph — build
+    /// bloat at minimum, and a real security gap when the older copy is the
+    /// vulnerable one and only the newer one gets patched.
+    pub duplicates: Vec<JsonDuplicate>,
+}
+
+#[derive(Serialize)]
+pub struct JsonDuplicate {
+    pub name: String,
+    pub versions: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -125,6 +135,68 @@ pub fn degraded_warning(
     msg
 }
 
+/// Crates resolved at more than one version in the same graph. Computed
+/// from the *full* node set, not just findings that cleared the score
+/// threshold — a duplicate is worth knowing about regardless of whether
+/// either copy individually scores high enough to appear as a finding.
+pub fn duplicate_groups(all_findings: &[Finding]) -> Vec<JsonDuplicate> {
+    let mut by_name: HashMap<&str, Vec<Version>> = HashMap::new();
+    for f in all_findings {
+        by_name
+            .entry(f.node.name.as_str())
+            .or_default()
+            .push(f.node.version.clone());
+    }
+
+    let mut groups: Vec<JsonDuplicate> = by_name
+        .into_iter()
+        .filter(|(_, versions)| versions.len() > 1)
+        .map(|(name, mut versions)| {
+            versions.sort();
+            JsonDuplicate {
+                name: name.to_string(),
+                versions: versions.iter().map(Version::to_string).collect(),
+            }
+        })
+        .collect();
+    groups.sort_by(|a, b| a.name.cmp(&b.name));
+    groups
+}
+
+/// A single-line summary of duplicate-version groups, capped so a graph
+/// with many duplicates doesn't produce an unreadable wall of text.
+pub fn duplicates_line(duplicates: &[JsonDuplicate]) -> Option<String> {
+    if duplicates.is_empty() {
+        return None;
+    }
+
+    const SHOWN: usize = 3;
+    let noun = if duplicates.len() == 1 {
+        "crate"
+    } else {
+        "crates"
+    };
+    let shown: Vec<String> = duplicates
+        .iter()
+        .take(SHOWN)
+        .map(|d| format!("{} ({})", d.name, d.versions.join(", ")))
+        .collect();
+    let more = duplicates.len().saturating_sub(SHOWN);
+    let suffix = if more > 0 {
+        format!(" (+ {more} more)")
+    } else {
+        String::new()
+    };
+
+    Some(format!(
+        "  {} {} {} resolve at multiple versions: {}{suffix}",
+        "⚠".yellow(),
+        duplicates.len(),
+        noun,
+        shown.join(", ")
+    ))
+}
+
 pub fn summarize(total: usize, critical: usize, warnings: usize, unknown: usize) -> ReportSummary {
     ReportSummary {
         critical,
@@ -141,6 +213,7 @@ pub fn to_json(
     summary: &ReportSummary,
     threshold: f64,
     unchecked: &[String],
+    duplicates: Vec<JsonDuplicate>,
 ) -> JsonReport {
     JsonReport {
         schema_version: JSON_SCHEMA_VERSION,
@@ -158,6 +231,7 @@ pub fn to_json(
             .iter()
             .map(|finding| json_finding(finding, meta_map, now))
             .collect(),
+        duplicates,
     }
 }
 
@@ -172,10 +246,11 @@ pub fn render(
     summary: &ReportSummary,
     quiet: bool,
     threshold: f64,
+    duplicates: &[JsonDuplicate],
 ) {
     print!(
         "{}",
-        render_to_string(findings, meta_map, now, summary, quiet, threshold)
+        render_to_string(findings, meta_map, now, summary, quiet, threshold, duplicates)
     );
 }
 
@@ -190,12 +265,17 @@ fn render_to_string(
     summary: &ReportSummary,
     quiet: bool,
     threshold: f64,
+    duplicates: &[JsonDuplicate],
 ) -> String {
     let mut out = String::new();
     write_summary(&mut out, summary);
 
     if quiet {
         return out;
+    }
+
+    if let Some(line) = duplicates_line(duplicates) {
+        writeln!(out, "{line}").unwrap();
     }
 
     writeln!(out).unwrap();
@@ -485,6 +565,13 @@ fn reason_lines(
     }
 
     if let Some(meta) = meta_map.get(&node.name) {
+        if meta.is_yanked(&node.version) {
+            lines.push(format!(
+                "yanked: {} {} was pulled from crates.io",
+                node.name, node.version
+            ));
+        }
+
         if let Some(line) = version_lag_line(&node.version, meta.latest_stable()) {
             lines.push(line);
         }
@@ -824,7 +911,7 @@ mod tests {
         let _guard = ColorOverrideGuard::new(true);
 
         let (findings, meta_map, now, summary) = sample_report();
-        let output = render_to_string(&findings, &meta_map, now, &summary, false, 5.0);
+        let output = render_to_string(&findings, &meta_map, now, &summary, false, 5.0, &[]);
         insta::assert_snapshot!(output);
     }
 
@@ -833,7 +920,7 @@ mod tests {
         let _guard = ColorOverrideGuard::new(false);
 
         let (findings, meta_map, now, summary) = sample_report();
-        let output = render_to_string(&findings, &meta_map, now, &summary, false, 5.0);
+        let output = render_to_string(&findings, &meta_map, now, &summary, false, 5.0, &[]);
         assert!(
             !output.contains('\u{1b}'),
             "uncolored snapshot must contain no ANSI escapes"

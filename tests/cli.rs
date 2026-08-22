@@ -193,3 +193,44 @@ fn degraded_registry_with_allow_incomplete_exits_zero() {
         .assert()
         .success();
 }
+
+const YANKED_DEP_MANIFEST: &str = "tests/fixtures/yanked-dep/Cargo.toml";
+
+#[test]
+fn yanked_version_is_detected_and_scored() {
+    let assert = depcheck()
+        .args([
+            "depcheck",
+            "--manifest-path",
+            YANKED_DEP_MANIFEST,
+            "--no-fetch",
+            "--threshold",
+            "0",
+            "--json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON report");
+    let libc = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "libc")
+        .unwrap_or_else(|| panic!("libc must appear as a finding: {report}"));
+
+    assert_eq!(libc["version"], "0.2.63");
+    assert!(
+        libc["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r.as_str().unwrap().starts_with("yanked:")),
+        "expected a yanked reason line, got: {libc}"
+    );
+    assert!(
+        libc["components"]["security"].as_f64().unwrap() >= 40.0,
+        "a yanked version should score at least the High-severity tier: {libc}"
+    );
+}

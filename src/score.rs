@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use rustsec::advisory::{Advisory, Severity};
+use rustsec::advisory::{Advisory, Informational, Severity};
 use semver::Version;
 
 use crate::graph::DependencyNode;
@@ -56,7 +56,8 @@ pub fn compute(
     advisories: &[Advisory],
     now: DateTime<Utc>,
 ) -> RiskScore {
-    let security = security_points(advisories);
+    let yanked = meta.is_some_and(|m| m.is_yanked(&node.version));
+    let security = security_points(advisories, yanked);
     let version_lag = meta
         .map(|m| version_lag_points(&node.version, m.latest_stable()))
         .unwrap_or(0.0);
@@ -88,17 +89,21 @@ impl RiskScore {
     }
 }
 
-fn security_points(advisories: &[Advisory]) -> f64 {
-    advisories
-        .iter()
-        .map(advisory_points)
-        .fold(0.0, f64::max)
-        .min(MAX_SECURITY)
+/// A yanked version is crates.io's own "don't use this" signal — the
+/// publisher pulled it, for a security reason or otherwise. Weighted
+/// comparably to a High-severity advisory: it doesn't always mean a
+/// vulnerability, but it always means "there was a reason not to."
+const YANKED_POINTS: f64 = 40.0;
+
+fn security_points(advisories: &[Advisory], yanked: bool) -> f64 {
+    let advisory_max = advisories.iter().map(advisory_points).fold(0.0, f64::max);
+    let yanked_points = if yanked { YANKED_POINTS } else { 0.0 };
+    advisory_max.max(yanked_points).min(MAX_SECURITY)
 }
 
 fn advisory_points(advisory: &Advisory) -> f64 {
     if let Some(info) = &advisory.metadata.informational {
-        return if info.is_unmaintained() { 20.0 } else { 10.0 };
+        return informational_points(info);
     }
 
     match advisory.severity() {
@@ -107,6 +112,31 @@ fn advisory_points(advisory: &Advisory) -> f64 {
         Some(Severity::Medium) => 30.0,
         Some(Severity::Low) => 20.0,
         Some(Severity::None) | None => 35.0,
+    }
+}
+
+/// Every variant `Informational` has today is matched by name, not folded
+/// into a wildcard — so this is the one place a new RustSec advisory
+/// category would need a deliberate decision, not a silent default.
+///
+/// One caveat: `Informational` is `#[non_exhaustive]` in `rustsec`, which
+/// means Rust still requires a trailing `_` arm even though every variant
+/// that exists today is listed above it — the compiler can't tell "every
+/// current variant, explicitly" from "I didn't bother." That arm exists
+/// only to satisfy that constraint; it is not a lazy catch-all, and if
+/// rustsec ships a real fifth variant it silently lands there rather than
+/// failing to compile — the closest this API lets us get to "a future
+/// variant is a compile error."
+fn informational_points(info: &Informational) -> f64 {
+    match info {
+        Informational::Notice => 10.0,
+        Informational::Unmaintained => 20.0,
+        // Unsound: using the crate's safe public API can cause undefined
+        // behavior. That's a real safety defect, not routine housekeeping —
+        // placed above Unmaintained, at the Medium-severity-CVE tier.
+        Informational::Unsound => 30.0,
+        Informational::Other(_) => 15.0,
+        _ => 15.0,
     }
 }
 
@@ -265,5 +295,65 @@ mod tests {
         assert_eq!(RiskLevel::from_score(70.0), RiskLevel::Warn);
         assert_eq!(RiskLevel::from_score(40.0), RiskLevel::Warn);
         assert_eq!(RiskLevel::from_score(39.9), RiskLevel::Low);
+    }
+
+    #[test]
+    fn informational_points_notice() {
+        assert_eq!(informational_points(&Informational::Notice), 10.0);
+    }
+
+    #[test]
+    fn informational_points_unmaintained() {
+        assert_eq!(informational_points(&Informational::Unmaintained), 20.0);
+    }
+
+    #[test]
+    fn informational_points_unsound_sits_above_unmaintained() {
+        let unsound = informational_points(&Informational::Unsound);
+        let unmaintained = informational_points(&Informational::Unmaintained);
+        assert_eq!(unsound, 30.0);
+        assert!(
+            unsound > unmaintained,
+            "an unsound crate (real UB risk) must outrank a merely unmaintained one"
+        );
+    }
+
+    #[test]
+    fn informational_points_other_is_pinned() {
+        assert_eq!(
+            informational_points(&Informational::Other("some-future-category".into())),
+            15.0
+        );
+    }
+
+    #[test]
+    fn yanked_version_scores_as_a_high_severity_signal() {
+        let node = test_node("leaf", 0, 0);
+        let meta = Metadata {
+            newest_version: Version::new(2, 0, 0),
+            max_stable_version: Some(Version::new(2, 0, 0)),
+            updated_at: Utc::now(),
+            yanked_versions: vec![Version::new(1, 0, 0)],
+        };
+        let now = Utc::now();
+
+        let risk = compute(&node, Some(&meta), &[], now);
+        assert_eq!(risk.security, YANKED_POINTS);
+    }
+
+    #[test]
+    fn non_yanked_version_is_unaffected_by_an_unrelated_yank() {
+        let mut node = test_node("leaf", 0, 0);
+        node.version = Version::new(2, 0, 0);
+        let meta = Metadata {
+            newest_version: Version::new(2, 0, 0),
+            max_stable_version: Some(Version::new(2, 0, 0)),
+            updated_at: Utc::now(),
+            yanked_versions: vec![Version::new(1, 0, 0)],
+        };
+        let now = Utc::now();
+
+        let risk = compute(&node, Some(&meta), &[], now);
+        assert_eq!(risk.security, 0.0);
     }
 }

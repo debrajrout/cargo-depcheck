@@ -103,7 +103,7 @@ Every crate gets 0–100 points from three signals, then multiplied by graph wei
 
 | Signal | Max | Source |
 |--------|-----|--------|
-| Security | 50 | RustSec advisories (CVE severity, unmaintained) |
+| Security | 50 | RustSec advisories (CVE severity, unmaintained, unsound) or a yanked version — whichever is worse |
 | Version lag | 25 | Major/minor versions behind latest stable |
 | Maintenance | 15 | Days since last crates.io publish (cap: 2 years) |
 | **× Graph weight** | 1.0–2.0 | More things depend on it → higher urgency |

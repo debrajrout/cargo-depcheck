@@ -190,6 +190,8 @@ async fn main() -> Result<()> {
         .filter(|f| f.advisories.is_empty() && !meta_map.contains_key(&f.node.name))
         .count();
 
+    let duplicates = report::duplicate_groups(&all_findings);
+
     let mut findings: Vec<report::Finding> = all_findings
         .into_iter()
         .filter(|finding| finding.risk.total >= args.threshold)
@@ -221,6 +223,7 @@ async fn main() -> Result<()> {
             &summary,
             args.threshold,
             &unchecked,
+            duplicates,
         );
         let output = report::render_json(&json_report)?;
         println!("{output}");
@@ -232,6 +235,7 @@ async fn main() -> Result<()> {
             &summary,
             args.quiet,
             args.threshold,
+            &duplicates,
         );
     }
 

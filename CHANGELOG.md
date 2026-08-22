@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Yanked-version detection.** A pinned version that's been pulled from
+  crates.io now scores at the High-severity tier (40 pts) and gets a
+  "yanked: NAME VERSION was pulled from crates.io" reason line — previously
+  silent. Uses the yanked-flag data already available from the sparse index
+  (P1-1).
+- **Duplicate-version reporting.** When the same crate resolves at more than
+  one version in your graph (build bloat at minimum; a real gap if the
+  older copy is the vulnerable one), it's now surfaced as a one-line
+  terminal summary and a `duplicates` array in `--json`, computed from the
+  full dependency graph regardless of individual scores.
+- `Unsound` RustSec advisories (real undefined-behavior risk from safe
+  code — 203 of 1,206 advisories in the database) now score at their own
+  tier (30 pts, above `Unmaintained`'s 20) instead of being folded into the
+  same 10-point bucket as a routine `Notice`. The match on
+  `rustsec::advisory::Informational` now names every variant explicitly —
+  `rustsec` marks the enum `#[non_exhaustive]`, so Rust still requires a
+  trailing wildcard arm, but it's a documented fallback for variants that
+  don't exist yet, not a lazy default covering ones that already do.
+
 ### Changed — BREAKING
 
 - **The graph-weight multiplier is now absolute, not relative to your own

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Cargo.lock` no longer re-dirties itself on a bare `cargo metadata` (the
+  committed `serde_derive → syn` edge had drifted from what the current
+  toolchain resolves). CI now has a dedicated job that fails if this
+  regresses, since `--locked` alone doesn't catch a lockfile that's an
+  unstable resolution rather than a wrong one.
 - Removed an unreachable branch in the advisory-status message, and the
   redundant full-graph advisory scan that only existed to produce its
   count — each dependency's advisories are now looked up exactly once.

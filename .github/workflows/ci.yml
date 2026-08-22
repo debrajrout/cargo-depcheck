@@ -63,3 +63,16 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+
+  lockfile:
+    name: lockfile is a fixpoint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # A committed Cargo.lock that a bare `cargo metadata` immediately
+      # rewrites means the resolved dependency set isn't actually pinned —
+      # `--locked` elsewhere in this workflow can't catch that on its own.
+      - run: cargo metadata --format-version 1 > /dev/null
+      - run: git diff --exit-code Cargo.lock

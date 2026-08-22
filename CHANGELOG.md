@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently dropping the result. The User-Agent contact URL, which pointed
   at a repository that does not exist, is now derived from
   `CARGO_PKG_REPOSITORY` so it can't drift from the real one again.
+- Colored and bold report rows (CRITICAL/WARN scores, direct-dependency
+  names) no longer misalign the box border. Padding is now computed from
+  the ANSI-stripped display width instead of `{:<width$}`, which counted
+  escape-sequence bytes as columns. Box width also now adapts to the real
+  terminal width (falls back to 77 columns when not a TTY), and overlong
+  crate names are ellipsized instead of blowing out the layout.
 
 ### Added
 

@@ -6,12 +6,21 @@ use colored::Colorize;
 use rustsec::advisory::Advisory;
 use semver::Version;
 use serde::Serialize;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::cratesio::Metadata;
 use crate::graph::DependencyNode;
 use crate::score::{RiskLevel, RiskScore, DEFAULT_THRESHOLD};
 
-const INNER_WIDTH: usize = 77;
+/// Fallback box width when no terminal is attached (e.g. output piped to a
+/// file) and `COLUMNS` isn't set.
+const DEFAULT_INNER_WIDTH: usize = 77;
+const MIN_INNER_WIDTH: usize = 60;
+const MAX_INNER_WIDTH: usize = 120;
+/// Space taken by the box's own `│ │` border characters.
+const BORDER_OVERHEAD: usize = 2;
+const NAME_FIELD_WIDTH: usize = 41;
+
 pub const JSON_SCHEMA_VERSION: u32 = 1;
 
 pub struct Finding {
@@ -169,6 +178,8 @@ pub fn render(
         return;
     }
 
+    let inner_width = detect_inner_width();
+
     let critical: Vec<_> = findings
         .iter()
         .filter(|f| f.risk.level == RiskLevel::Critical)
@@ -183,17 +194,38 @@ pub fn render(
         .collect();
 
     if !critical.is_empty() {
-        render_section("CRITICAL", RiskLevel::Critical, &critical, meta_map, now);
+        render_section(
+            "CRITICAL",
+            RiskLevel::Critical,
+            &critical,
+            meta_map,
+            now,
+            inner_width,
+        );
         println!();
     }
 
     if !warnings.is_empty() {
-        render_section("WARN", RiskLevel::Warn, &warnings, meta_map, now);
+        render_section(
+            "WARN",
+            RiskLevel::Warn,
+            &warnings,
+            meta_map,
+            now,
+            inner_width,
+        );
         println!();
     }
 
     if threshold < DEFAULT_THRESHOLD && !notice.is_empty() {
-        render_section("NOTICE", RiskLevel::Low, &notice, meta_map, now);
+        render_section(
+            "NOTICE",
+            RiskLevel::Low,
+            &notice,
+            meta_map,
+            now,
+            inner_width,
+        );
         println!();
     }
 
@@ -203,6 +235,61 @@ pub fn render(
             "✓".green()
         );
     }
+}
+
+/// Picks a box width from the real terminal, `COLUMNS`, or a sane default —
+/// clamped so a tiny or absurdly wide terminal never breaks the layout.
+fn detect_inner_width() -> usize {
+    let cols = terminal_size::terminal_size()
+        .map(|(terminal_size::Width(w), _)| w as usize)
+        .or_else(|| std::env::var("COLUMNS").ok().and_then(|v| v.parse().ok()));
+
+    match cols {
+        Some(c) => c
+            .saturating_sub(BORDER_OVERHEAD)
+            .clamp(MIN_INNER_WIDTH, MAX_INNER_WIDTH),
+        None => DEFAULT_INNER_WIDTH,
+    }
+}
+
+/// Right-pads `s` to `width` display columns (not bytes/chars), so
+/// multi-byte and full-width characters still align.
+fn pad_to_width(s: &str, width: usize) -> String {
+    let visible = s.width();
+    if visible >= width {
+        s.to_string()
+    } else {
+        format!("{s}{}", " ".repeat(width - visible))
+    }
+}
+
+/// Truncates `s` to `width` display columns, appending `…` if it was cut.
+fn ellipsize(s: &str, width: usize) -> String {
+    if s.width() <= width || width == 0 {
+        return s.chars().take(width).collect();
+    }
+    let mut out = String::new();
+    let mut w = 0;
+    for ch in s.chars() {
+        let cw = ch.width().unwrap_or(0);
+        if w + cw > width.saturating_sub(1) {
+            break;
+        }
+        out.push(ch);
+        w += cw;
+    }
+    out.push('…');
+    out
+}
+
+/// Wraps already-styled `content` in the box's left/right border, computing
+/// padding from `visible_width` — the ANSI-stripped display width of
+/// `content` — rather than from `content` itself. `format!("{:<N$}")` counts
+/// escape-sequence bytes as columns, which is what misaligns colored and
+/// bold rows; every caller must measure the unstyled text first.
+fn boxed_line(content: &str, visible_width: usize, inner_width: usize) -> String {
+    let pad = inner_width.saturating_sub(visible_width);
+    format!("│{content}{}│", " ".repeat(pad))
 }
 
 fn print_summary(summary: &ReportSummary) {
@@ -271,21 +358,25 @@ fn render_section(
     items: &[&Finding],
     meta_map: &HashMap<String, Metadata>,
     now: DateTime<Utc>,
+    inner_width: usize,
 ) {
-    println!("┌{}┐", "─".repeat(INNER_WIDTH));
+    println!("┌{}┐", "─".repeat(inner_width));
 
     let title_label = format!("  {title} ");
-    println!("│{title_label:<INNER_WIDTH$}│");
-    println!("├{}┤", "─".repeat(INNER_WIDTH));
+    println!(
+        "{}",
+        boxed_line(&title_label, title_label.width(), inner_width)
+    );
+    println!("├{}┤", "─".repeat(inner_width));
 
     for (index, finding) in items.iter().enumerate() {
         if index > 0 {
-            println!("├{}┤", "─".repeat(INNER_WIDTH));
+            println!("├{}┤", "─".repeat(inner_width));
         }
-        render_finding(finding, level, meta_map, now);
+        render_finding(finding, level, meta_map, now, inner_width);
     }
 
-    println!("└{}┘", "─".repeat(INNER_WIDTH));
+    println!("└{}┘", "─".repeat(inner_width));
 }
 
 fn render_finding(
@@ -293,23 +384,10 @@ fn render_finding(
     level: RiskLevel,
     meta_map: &HashMap<String, Metadata>,
     now: DateTime<Utc>,
+    inner_width: usize,
 ) {
-    let name_ver = format!("{} {}", finding.node.name, finding.node.version);
-    let padded_name = format!(" {name_ver:<41}");
-    let score_raw = format!("{:>3.0}", finding.risk.total);
-    let score_display = match level {
-        RiskLevel::Critical => score_raw.red().bold().to_string(),
-        RiskLevel::Warn => score_raw.yellow().to_string(),
-        RiskLevel::Low => score_raw,
-    };
-
-    let bar = score_bar(finding.risk.total, 12);
-    let header = if finding.node.is_direct {
-        format!("{}{score_display} {bar}", padded_name.bold())
-    } else {
-        format!("{padded_name}{score_display} {bar}")
-    };
-    println!("│{header:<INNER_WIDTH$}│");
+    let (header, visible_width) = build_header(finding, level);
+    println!("{}", boxed_line(&header, visible_width, inner_width));
 
     for line in reason_lines(
         &finding.node,
@@ -319,8 +397,35 @@ fn render_finding(
         now,
     ) {
         let detail = format!("   {line}");
-        println!("│{detail:<INNER_WIDTH$}│");
+        println!("{}", boxed_line(&detail, detail.width(), inner_width));
     }
+}
+
+/// Builds a finding's header row: the styled content, plus its true visible
+/// width measured from the *unstyled* text. Split out from `render_finding`
+/// so the same construction is exercised directly in tests — this is the
+/// exact code path where colored/bold rows previously misaligned the box.
+fn build_header(finding: &Finding, level: RiskLevel) -> (String, usize) {
+    let name_ver = format!("{} {}", finding.node.name, finding.node.version);
+    let name_field = ellipsize(&name_ver, NAME_FIELD_WIDTH);
+    let padded_name = format!(" {}", pad_to_width(&name_field, NAME_FIELD_WIDTH));
+
+    let score_text = format!("{:>3.0}", finding.risk.total);
+    let bar = score_bar(finding.risk.total, 12);
+
+    let visible_width = format!("{padded_name}{score_text} {bar}").width();
+
+    let score_display = match level {
+        RiskLevel::Critical => score_text.red().bold().to_string(),
+        RiskLevel::Warn => score_text.yellow().to_string(),
+        RiskLevel::Low => score_text,
+    };
+    let styled_name = if finding.node.is_direct {
+        padded_name.bold().to_string()
+    } else {
+        padded_name
+    };
+    (format!("{styled_name}{score_display} {bar}"), visible_width)
 }
 
 fn score_bar(score: f64, width: usize) -> String {
@@ -452,5 +557,100 @@ mod tests {
         let latest = Version::new(3, 0, 0);
         let line = version_lag_line(&have, &latest).unwrap();
         assert!(line.contains("3 major"));
+    }
+
+    /// Ensures `colored::control::set_override` is always undone, even if
+    /// an assertion below panics — otherwise one failing test would leave
+    /// every later test in this binary rendering ANSI codes it doesn't expect.
+    struct ColorOverrideGuard;
+    impl Drop for ColorOverrideGuard {
+        fn drop(&mut self) {
+            colored::control::unset_override();
+        }
+    }
+
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::new();
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                for c2 in chars.by_ref() {
+                    if c2 == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn test_finding(name: &str, is_direct: bool, level: RiskLevel, total: f64) -> Finding {
+        Finding {
+            node: DependencyNode {
+                name: name.to_string(),
+                version: Version::new(1, 0, 0),
+                is_direct,
+                depth: 1,
+                dependent_count: 0,
+                is_registry: true,
+            },
+            risk: RiskScore {
+                security: 0.0,
+                version_lag: 0.0,
+                maintenance: 0.0,
+                graph_multiplier: 1.0,
+                total,
+                level,
+            },
+            advisories: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn colored_and_bold_rows_stay_aligned_with_the_border() {
+        let _guard = ColorOverrideGuard;
+        colored::control::set_override(true);
+
+        const INNER: usize = 77;
+        let cases = [
+            test_finding("plain-crate", false, RiskLevel::Low, 10.0),
+            test_finding("bold-direct-crate", true, RiskLevel::Low, 10.0),
+            test_finding("warn-crate", false, RiskLevel::Warn, 55.0),
+            test_finding("critical-crate", true, RiskLevel::Critical, 90.0),
+            test_finding(
+                "a-crate-with-a-genuinely-long-name-that-does-not-fit-the-field",
+                true,
+                RiskLevel::Critical,
+                90.0,
+            ),
+        ];
+
+        for finding in &cases {
+            let (header, visible_width) = build_header(finding, finding.risk.level);
+            let line = boxed_line(&header, visible_width, INNER);
+            let stripped = strip_ansi(&line);
+            assert_eq!(
+                stripped.chars().count(),
+                INNER + 2,
+                "misaligned for {} (is_direct={})",
+                finding.node.name,
+                finding.node.is_direct
+            );
+        }
+    }
+
+    #[test]
+    fn ellipsize_truncates_overlong_names() {
+        let long = "a-crate-with-a-genuinely-long-name-that-does-not-fit-the-field";
+        let out = ellipsize(long, NAME_FIELD_WIDTH);
+        assert!(out.width() <= NAME_FIELD_WIDTH);
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn ellipsize_leaves_short_names_untouched() {
+        assert_eq!(ellipsize("serde", NAME_FIELD_WIDTH), "serde");
     }
 }

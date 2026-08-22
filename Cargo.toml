@@ -57,6 +57,14 @@ strip = true
 lto = true
 codegen-units = 1
 
+# Snapshot diffing (insta -> similar) is slow in debug; cargo-deny does the same.
+[profile.dev.package.insta]
+opt-level = 3
+
+[profile.dev.package.similar]
+opt-level = 3
+
 [dev-dependencies]
 assert_cmd = "2"
+insta = "1"
 predicates = "3"

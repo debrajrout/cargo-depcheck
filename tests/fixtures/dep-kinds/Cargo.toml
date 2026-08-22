@@ -1,0 +1,4 @@
+[workspace]
+members = ["root"]
+exclude = ["normal-dep", "dev-only-dep", "build-only-dep"]
+resolver = "2"

@@ -123,7 +123,7 @@ Ask if you are interested after several merged contributions.
 | 5 minutes | Fix a typo in README, improve an error message |
 | 30 minutes | Add a unit test in `score.rs` or `report.rs` |
 | 1 hour | Reproduce and fix a `good first issue` bug |
-| An afternoon | Integration test fixtures (stubbed HTTP — see [future work](#areas-we-especially-welcome-help-with)) |
+| An afternoon | Vendor a trimmed OSV advisory-DB fixture so RustSec-related tests stop needing the live database (see [future work](#areas-we-especially-welcome-help-with)) |
 | Ongoing interest | Become a triager; review open PRs |
 
 ### Areas we especially welcome help with
@@ -132,10 +132,10 @@ These are **not blockers** — the tool works today — but they would help the
 project mature:
 
 1. **`[package.metadata.depcheck]` config** — per-project threshold and ignore list in `Cargo.toml`
-2. **Integration test fixtures** — `tests/fixtures/` with stubbed crates.io / RustSec (no live network in CI)
+2. **Offline advisory fixtures** — `tests/fixtures/` already covers the dependency graph (see `graph.rs`'s tests) and CLI behavior with no live network; RustSec-specific scenarios (a known-vulnerable pin, a yanked version) still rely on the real cached advisory DB
 3. **Scoring feedback** — real projects where ranking feels wrong; we tune weights together
 4. **Docs & examples** — blog-style "how we use depcheck in CI" snippets
-5. **Accessibility** — color-blind-friendly output, `--no-color` respect
+5. **Accessibility** — color-blind-friendly glyphs (color is already respected via `--color`/`NO_COLOR`/`CLICOLOR_FORCE`, but severity is still color-only)
 6. **SARIF / delta mode** — see open feature requests
 
 Comment on an issue or open a new one before starting large work.
@@ -189,17 +189,22 @@ CI runs the same checks on **Linux, macOS, and Windows**.
 src/
 ├── main.rs         Five-phase orchestration (graph → registry → advisories → score → report)
 ├── cli.rs          Clap arguments + cargo plugin wrapper
-├── graph.rs        cargo metadata, BFS, DependencyNode
-├── registry.rs     Sparse-index client (crates.io metadata, no rate limit)
+├── graph.rs        cargo metadata, BFS, DependencyNode (unit tests here, against tests/fixtures/)
+├── registry.rs     Sparse-index client (crates.io metadata, no rate limit; unit tests here)
 ├── advisories.rs   RustSec database fetch and lookup
 ├── score.rs        RiskScore formula (unit tests here)
-└── report.rs       Terminal boxes + JSON output (unit tests here)
+└── report.rs       Terminal boxes + JSON output (unit + snapshot tests here)
+
+tests/
+├── cli.rs          End-to-end CLI behavior via the real binary (assert_cmd)
+└── fixtures/       Local-path-only Cargo workspaces the tests above resolve
+                     against — no network needed to run `cargo metadata` on them
 ```
 
 **Pipeline:**
 
 ```
-graph → crates.io → advisories → score → report
+graph → registry → advisories → score → report
 ```
 
 Read [README.md](README.md) for user-facing behavior and scoring tables.

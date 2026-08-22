@@ -27,7 +27,14 @@ pub fn load(manifest_path: Option<&Path>) -> Result<Vec<DependencyNode>> {
     }
 
     let metadata = cmd.exec().context("failed to run `cargo metadata`")?;
+    from_metadata(&metadata)
+}
 
+/// Pure transformation from a resolved `cargo metadata` graph to our own
+/// `DependencyNode`s — split out from `load()` so it can be exercised
+/// directly against fixture JSON in tests, with no `cargo metadata`
+/// subprocess (and therefore no network) involved.
+pub fn from_metadata(metadata: &cargo_metadata::Metadata) -> Result<Vec<DependencyNode>> {
     let resolve = metadata
         .resolve
         .as_ref()
@@ -112,4 +119,191 @@ pub fn load(manifest_path: Option<&Path>) -> Result<Vec<DependencyNode>> {
     nodes.sort_by(|a, b| a.depth.cmp(&b.depth).then(a.name.cmp(&b.name)));
 
     Ok(nodes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Loads a fixture workspace under `tests/fixtures/` via a real (but
+    /// network-free — every dependency is a local path) `cargo metadata`
+    /// invocation, so these tests exercise the exact same parsing path as
+    /// production, not a hand-serialized stand-in that could drift from the
+    /// real schema.
+    fn load_fixture(name: &str) -> cargo_metadata::Metadata {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name)
+            .join("Cargo.toml");
+        cargo_metadata::MetadataCommand::new()
+            .manifest_path(&manifest)
+            .exec()
+            .unwrap_or_else(|e| panic!("fixture {name} failed to resolve: {e}"))
+    }
+
+    fn find<'a>(nodes: &'a [DependencyNode], name: &str) -> &'a DependencyNode {
+        nodes
+            .iter()
+            .find(|n| n.name == name)
+            .unwrap_or_else(|| panic!("{name} missing from graph output: {nodes:?}"))
+    }
+
+    #[test]
+    fn bfs_assigns_increasing_depth_along_a_chain() {
+        let metadata = load_fixture("chain");
+        let nodes = from_metadata(&metadata).unwrap();
+
+        // The workspace member itself (chain-root) is depth 0 and is never
+        // emitted — only its dependencies are.
+        assert!(nodes.iter().all(|n| n.name != "chain-root"));
+
+        let mid = find(&nodes, "chain-mid");
+        let leaf = find(&nodes, "chain-leaf");
+        assert_eq!(mid.depth, 1);
+        assert_eq!(leaf.depth, 2);
+    }
+
+    #[test]
+    fn direct_vs_transitive_matches_depth_one() {
+        let metadata = load_fixture("chain");
+        let nodes = from_metadata(&metadata).unwrap();
+
+        let mid = find(&nodes, "chain-mid");
+        let leaf = find(&nodes, "chain-leaf");
+        assert!(mid.is_direct, "depth-1 dependency must be direct");
+        assert!(!leaf.is_direct, "depth-2 dependency must not be direct");
+    }
+
+    #[test]
+    fn dependent_count_reflects_direct_parents_in_the_resolved_graph() {
+        let metadata = load_fixture("chain");
+        let nodes = from_metadata(&metadata).unwrap();
+
+        // chain-leaf has exactly one parent in the graph: chain-mid.
+        let leaf = find(&nodes, "chain-leaf");
+        assert_eq!(leaf.dependent_count, 1);
+    }
+
+    #[test]
+    fn dev_and_build_only_dependencies_are_excluded() {
+        let metadata = load_fixture("dep-kinds");
+        let nodes = from_metadata(&metadata).unwrap();
+
+        assert!(
+            nodes.iter().any(|n| n.name == "normal-dep"),
+            "a normal dependency must be present"
+        );
+        assert!(
+            nodes.iter().all(|n| n.name != "dev-only-dep"),
+            "a dev-only dependency must not appear in the graph: {nodes:?}"
+        );
+        assert!(
+            nodes.iter().all(|n| n.name != "build-only-dep"),
+            "a build-only dependency must not appear in the graph: {nodes:?}"
+        );
+    }
+
+    #[test]
+    fn unreachable_packages_are_dropped_not_left_at_max_depth() {
+        // dev-only-dep and build-only-dep both resolve to depth == usize::MAX
+        // internally (never reached by the Normal-edges-only BFS) and must be
+        // filtered out of the final output entirely, not emitted with a
+        // nonsensical depth.
+        let metadata = load_fixture("dep-kinds");
+        let nodes = from_metadata(&metadata).unwrap();
+        assert!(nodes.iter().all(|n| n.depth != usize::MAX));
+    }
+
+    #[test]
+    fn bfs_starts_from_every_workspace_member_not_just_one() {
+        // Two workspace members (member-a, member-b) both depend on the
+        // same path crate (mm-shared). BFS must seed from every workspace
+        // root, not just the first one — otherwise mm-shared's depth or
+        // dependent_count would silently miss the edge from whichever
+        // member isn't treated as a root.
+        let metadata = load_fixture("multi-member");
+        let nodes = from_metadata(&metadata).unwrap();
+
+        assert!(nodes
+            .iter()
+            .all(|n| n.name != "member-a" && n.name != "member-b"));
+
+        let shared = find(&nodes, "mm-shared");
+        assert_eq!(shared.depth, 1, "reachable at depth 1 from either member");
+        assert_eq!(
+            shared.dependent_count, 2,
+            "both member-a and member-b depend on it directly"
+        );
+        assert!(shared.is_direct);
+    }
+
+    #[test]
+    fn duplicate_resolved_versions_of_the_same_crate_both_survive() {
+        // graph.rs keys everything by PackageId, never by name, so two
+        // versions of the same crate name must both appear as independent
+        // nodes rather than one clobbering the other. Constructed by cloning
+        // a real resolved graph and duplicating one package's entry at a
+        // different version under a synthetic id, since a genuine
+        // same-name-two-versions graph normally only arises via the crates.io
+        // registry, which these fixtures deliberately avoid.
+        let mut metadata = load_fixture("chain");
+        let resolve = metadata.resolve.as_mut().unwrap();
+
+        let leaf_pkg = metadata
+            .packages
+            .iter()
+            .find(|p| p.name.as_str() == "chain-leaf")
+            .unwrap()
+            .clone();
+        let leaf_node = resolve
+            .nodes
+            .iter()
+            .find(|n| n.id == leaf_pkg.id)
+            .unwrap()
+            .clone();
+
+        let mut dup_pkg = leaf_pkg.clone();
+        let dup_id = cargo_metadata::PackageId {
+            repr: format!("{}+duplicate", leaf_pkg.id.repr),
+        };
+        dup_pkg.id = dup_id.clone();
+        dup_pkg.version = semver::Version::new(9, 9, 9);
+
+        let mut dup_node = leaf_node.clone();
+        dup_node.id = dup_id.clone();
+
+        // Wire chain-root -> the duplicate too, so it's reachable at depth 1
+        // (distinct from the original chain-leaf's depth 2), proving depth
+        // and dependent_count are tracked per-PackageId, not merged by name.
+        let root_id = metadata.workspace_members[0].clone();
+        let root_node = resolve.nodes.iter_mut().find(|n| n.id == root_id).unwrap();
+        let mut dup_dep = root_node
+            .deps
+            .iter()
+            .find(|d| d.pkg == leaf_pkg.id)
+            .cloned()
+            .unwrap_or_else(|| root_node.deps[0].clone());
+        dup_dep.pkg = dup_id.clone();
+        root_node.deps.push(dup_dep);
+        root_node.dependencies.push(dup_id);
+
+        metadata.packages.push(dup_pkg);
+        resolve.nodes.push(dup_node);
+
+        let nodes = from_metadata(&metadata).unwrap();
+        let leaf_nodes: Vec<&DependencyNode> =
+            nodes.iter().filter(|n| n.name == "chain-leaf").collect();
+
+        assert_eq!(
+            leaf_nodes.len(),
+            2,
+            "both versions must survive as independent nodes: {nodes:?}"
+        );
+        assert!(leaf_nodes
+            .iter()
+            .any(|n| n.version == semver::Version::new(9, 9, 9)));
+        assert!(leaf_nodes
+            .iter()
+            .any(|n| n.version != semver::Version::new(9, 9, 9)));
+    }
 }

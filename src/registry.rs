@@ -35,6 +35,18 @@ const PER_CRATE_TIMEOUT: Duration = Duration::from_secs(20);
 /// around, so the whole call is wrapped here instead.
 const BATCH_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Reads `BATCH_TIMEOUT`, unless overridden for tests. A hardcoded 60s bound
+/// makes any test that deliberately breaks the network take a full minute;
+/// this override lets those tests exercise the exact same timeout path in a
+/// few seconds without weakening the production default at all.
+fn batch_timeout() -> Duration {
+    std::env::var("CARGO_DEPCHECK_TEST_BATCH_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(BATCH_TIMEOUT)
+}
+
 #[derive(Debug, Clone)]
 pub struct Metadata {
     /// Highest version in the index, including yanked and pre-release.
@@ -147,9 +159,10 @@ impl IndexSource for SparseRegistry {
                     .collect();
             }
 
+            let timeout = batch_timeout();
             let requested = names.clone();
             let raw = tokio::time::timeout(
-                BATCH_TIMEOUT,
+                timeout,
                 self.remote
                     .krates(names, true, Some(PER_CRATE_TIMEOUT), &lock),
             )
@@ -162,7 +175,7 @@ impl IndexSource for SparseRegistry {
                         (
                             name,
                             Err(anyhow::anyhow!(
-                                "sparse index request did not complete within {BATCH_TIMEOUT:?}"
+                                "sparse index request did not complete within {timeout:?}"
                             )),
                         )
                     })

@@ -1,0 +1,14 @@
+[package]
+name = "dep-kinds-root"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+normal-dep = { path = "../normal-dep" }
+
+[dev-dependencies]
+dev-only-dep = { path = "../dev-only-dep" }
+
+[build-dependencies]
+build-only-dep = { path = "../build-only-dep" }

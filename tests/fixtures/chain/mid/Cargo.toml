@@ -1,0 +1,8 @@
+[package]
+name = "chain-mid"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+chain-leaf = { path = "../leaf" }

@@ -1,4 +1,7 @@
 /target
+# Fixture crates under tests/fixtures/ each build their own target/ if
+# `cargo build`/`test` is ever run directly against them.
+tests/fixtures/*/target
 *.pdb
 
 # advisory DB cache — fetched at runtime, no need to track

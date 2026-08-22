@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Integration test harness: `graph.rs` (previously untested) now has unit
+  tests covering BFS depth assignment, direct-vs-transitive classification,
+  dependent-count, dev/build-dependency exclusion, the unreachable-depth
+  drop, duplicate resolved versions of one crate, and multi-member
+  workspace BFS — run against real (but network-free, path-only)
+  fixture workspaces under `tests/fixtures/`. `graph::load()` is now split
+  into a thin `cargo metadata` wrapper and a pure `from_metadata()` so this
+  is testable without a subprocess.
+- `tests/cli.rs`: end-to-end CLI tests via the real binary, including the
+  full `--fail-on`/`--allow-incomplete` exit-code contract (0/2/3 asserted
+  end-to-end; 1 remains covered at the unit level only — see notes).
+- Report rendering has colored and uncolored snapshot tests (`insta`),
+  locking the P0-3 box-alignment fix permanently. `report::render()` is
+  now a thin wrapper around a pure `render_to_string()` for this purpose.
+
+### Fixed
+
+- Five existing CLI tests (quiet output, color precedence) never passed
+  `--no-advisories`, so each one triggered a real RustSec advisory-database
+  git fetch. Running them concurrently (`cargo test`'s default) raced
+  against the same shared `~/.cargo/advisory-db` checkout and corrupted it
+  during this work — reproduced firsthand. All five now pass
+  `--no-advisories`; the whole suite is confirmed network-free.
+
 ### Changed
 
 - Replaced the crates.io JSON API with the sparse index (`index.crates.io`)

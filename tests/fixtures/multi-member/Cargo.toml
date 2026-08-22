@@ -1,0 +1,4 @@
+[workspace]
+members = ["member-a", "member-b"]
+exclude = ["shared"]
+resolver = "2"

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -171,13 +172,32 @@ pub fn render(
     quiet: bool,
     threshold: f64,
 ) {
-    print_summary(summary);
+    print!(
+        "{}",
+        render_to_string(findings, meta_map, now, summary, quiet, threshold)
+    );
+}
+
+/// Builds the exact text `render()` prints, as a `String` instead of writing
+/// directly to stdout — this is what makes the report snapshot-testable:
+/// tests can assert on the returned text (with `colored::control::set_override`
+/// forcing ANSI on or off) without any global-stdout capture trickery.
+fn render_to_string(
+    findings: &[Finding],
+    meta_map: &HashMap<String, Metadata>,
+    now: DateTime<Utc>,
+    summary: &ReportSummary,
+    quiet: bool,
+    threshold: f64,
+) -> String {
+    let mut out = String::new();
+    write_summary(&mut out, summary);
 
     if quiet {
-        return;
+        return out;
     }
 
-    println!();
+    writeln!(out).unwrap();
     let inner_width = detect_inner_width();
 
     let critical: Vec<_> = findings
@@ -194,7 +214,8 @@ pub fn render(
         .collect();
 
     if !critical.is_empty() {
-        render_section(
+        write_section(
+            &mut out,
             "CRITICAL",
             RiskLevel::Critical,
             &critical,
@@ -202,11 +223,12 @@ pub fn render(
             now,
             inner_width,
         );
-        println!();
+        writeln!(out).unwrap();
     }
 
     if !warnings.is_empty() {
-        render_section(
+        write_section(
+            &mut out,
             "WARN",
             RiskLevel::Warn,
             &warnings,
@@ -214,11 +236,12 @@ pub fn render(
             now,
             inner_width,
         );
-        println!();
+        writeln!(out).unwrap();
     }
 
     if threshold < DEFAULT_THRESHOLD && !notice.is_empty() {
-        render_section(
+        write_section(
+            &mut out,
             "NOTICE",
             RiskLevel::Low,
             &notice,
@@ -226,15 +249,19 @@ pub fn render(
             now,
             inner_width,
         );
-        println!();
+        writeln!(out).unwrap();
     }
 
     if critical.is_empty() && warnings.is_empty() && notice.is_empty() {
-        println!(
+        writeln!(
+            out,
             "  {} No dependencies scored at or above the threshold.\n",
             "✓".green()
-        );
+        )
+        .unwrap();
     }
+
+    out
 }
 
 /// Picks a box width from the real terminal, `COLUMNS`, or a sane default —
@@ -292,22 +319,26 @@ fn boxed_line(content: &str, visible_width: usize, inner_width: usize) -> String
     format!("│{content}{}│", " ".repeat(pad))
 }
 
-fn print_summary(summary: &ReportSummary) {
+fn write_summary(out: &mut String, summary: &ReportSummary) {
     if summary.unknown > 0 {
-        println!(
+        writeln!(
+            out,
             "  {} critical  ·  {} warnings  ·  {} unknown  ·  {} healthy",
             summary.critical.to_string().red().bold(),
             summary.warnings.to_string().yellow().bold(),
             summary.unknown.to_string().dimmed(),
             summary.healthy.to_string().green(),
-        );
+        )
+        .unwrap();
     } else {
-        println!(
+        writeln!(
+            out,
             "  {} critical  ·  {} warnings  ·  {} healthy",
             summary.critical.to_string().red().bold(),
             summary.warnings.to_string().yellow().bold(),
             summary.healthy.to_string().green(),
-        );
+        )
+        .unwrap();
     }
 }
 
@@ -352,7 +383,8 @@ fn advisory_label(advisory: &Advisory) -> String {
     advisory.id().as_str().to_string()
 }
 
-fn render_section(
+fn write_section(
+    out: &mut String,
     title: &str,
     level: RiskLevel,
     items: &[&Finding],
@@ -360,26 +392,29 @@ fn render_section(
     now: DateTime<Utc>,
     inner_width: usize,
 ) {
-    println!("┌{}┐", "─".repeat(inner_width));
+    writeln!(out, "┌{}┐", "─".repeat(inner_width)).unwrap();
 
     let title_label = format!("  {title} ");
-    println!(
+    writeln!(
+        out,
         "{}",
         boxed_line(&title_label, title_label.width(), inner_width)
-    );
-    println!("├{}┤", "─".repeat(inner_width));
+    )
+    .unwrap();
+    writeln!(out, "├{}┤", "─".repeat(inner_width)).unwrap();
 
     for (index, finding) in items.iter().enumerate() {
         if index > 0 {
-            println!("├{}┤", "─".repeat(inner_width));
+            writeln!(out, "├{}┤", "─".repeat(inner_width)).unwrap();
         }
-        render_finding(finding, level, meta_map, now, inner_width);
+        write_finding(out, finding, level, meta_map, now, inner_width);
     }
 
-    println!("└{}┘", "─".repeat(inner_width));
+    writeln!(out, "└{}┘", "─".repeat(inner_width)).unwrap();
 }
 
-fn render_finding(
+fn write_finding(
+    out: &mut String,
     finding: &Finding,
     level: RiskLevel,
     meta_map: &HashMap<String, Metadata>,
@@ -387,7 +422,7 @@ fn render_finding(
     inner_width: usize,
 ) {
     let (header, visible_width) = build_header(finding, level);
-    println!("{}", boxed_line(&header, visible_width, inner_width));
+    writeln!(out, "{}", boxed_line(&header, visible_width, inner_width)).unwrap();
 
     for line in reason_lines(
         &finding.node,
@@ -397,7 +432,7 @@ fn render_finding(
         now,
     ) {
         let detail = format!("   {line}");
-        println!("{}", boxed_line(&detail, detail.width(), inner_width));
+        writeln!(out, "{}", boxed_line(&detail, detail.width(), inner_width)).unwrap();
     }
 }
 
@@ -562,7 +597,27 @@ mod tests {
     /// Ensures `colored::control::set_override` is always undone, even if
     /// an assertion below panics — otherwise one failing test would leave
     /// every later test in this binary rendering ANSI codes it doesn't expect.
-    struct ColorOverrideGuard;
+    ///
+    /// Also serializes every test that touches `colored::control` against
+    /// every other one: it's global process state, and `cargo test` runs
+    /// tests from the same binary concurrently on different threads by
+    /// default, so two such tests racing on the override was an observed,
+    /// reproducible failure (one test's forced-off color randomly came back
+    /// forced-on mid-run) before this lock existed.
+    static COLOR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct ColorOverrideGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl ColorOverrideGuard {
+        fn new(force: bool) -> Self {
+            let lock = COLOR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            colored::control::set_override(force);
+            Self { _lock: lock }
+        }
+    }
+
     impl Drop for ColorOverrideGuard {
         fn drop(&mut self) {
             colored::control::unset_override();
@@ -610,8 +665,7 @@ mod tests {
 
     #[test]
     fn colored_and_bold_rows_stay_aligned_with_the_border() {
-        let _guard = ColorOverrideGuard;
-        colored::control::set_override(true);
+        let _guard = ColorOverrideGuard::new(true);
 
         const INNER: usize = 77;
         let cases = [
@@ -652,5 +706,132 @@ mod tests {
     #[test]
     fn ellipsize_leaves_short_names_untouched() {
         assert_eq!(ellipsize("serde", NAME_FIELD_WIDTH), "serde");
+    }
+
+    /// A small, fully synthetic report exercising CRITICAL, WARN, and NOTICE
+    /// sections, a direct and a transitive dependency, and both version-lag
+    /// and maintenance reason lines — fixed inputs only, no network or clock
+    /// dependency, so the rendered text is exactly reproducible.
+    fn sample_report() -> (
+        Vec<Finding>,
+        HashMap<String, Metadata>,
+        DateTime<Utc>,
+        ReportSummary,
+    ) {
+        let now: DateTime<Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
+
+        let mut meta_map = HashMap::new();
+        meta_map.insert(
+            "openssl".to_string(),
+            Metadata {
+                newest_version: Version::new(3, 0, 0),
+                max_stable_version: Some(Version::new(3, 0, 0)),
+                updated_at: now - chrono::Duration::days(730),
+                yanked_versions: Vec::new(),
+            },
+        );
+        meta_map.insert(
+            "tokio".to_string(),
+            Metadata {
+                newest_version: Version::new(1, 40, 0),
+                max_stable_version: Some(Version::new(1, 40, 0)),
+                updated_at: now - chrono::Duration::days(10),
+                yanked_versions: Vec::new(),
+            },
+        );
+        meta_map.insert(
+            "libc".to_string(),
+            Metadata {
+                newest_version: Version::new(0, 2, 189),
+                max_stable_version: Some(Version::new(0, 2, 189)),
+                updated_at: now - chrono::Duration::days(20),
+                yanked_versions: Vec::new(),
+            },
+        );
+
+        let findings = vec![
+            Finding {
+                node: DependencyNode {
+                    name: "openssl".to_string(),
+                    version: Version::new(0, 10, 45),
+                    is_direct: true,
+                    depth: 1,
+                    dependent_count: 23,
+                    is_registry: true,
+                },
+                risk: RiskScore {
+                    security: 0.0,
+                    version_lag: 25.0,
+                    maintenance: 15.0,
+                    graph_multiplier: 1.8,
+                    total: 94.0,
+                    level: RiskLevel::Critical,
+                },
+                advisories: Vec::new(),
+            },
+            Finding {
+                node: DependencyNode {
+                    name: "tokio".to_string(),
+                    version: Version::new(1, 30, 0),
+                    is_direct: false,
+                    depth: 2,
+                    dependent_count: 3,
+                    is_registry: true,
+                },
+                risk: RiskScore {
+                    security: 0.0,
+                    version_lag: 10.0,
+                    maintenance: 2.0,
+                    graph_multiplier: 1.1,
+                    total: 55.0,
+                    level: RiskLevel::Warn,
+                },
+                advisories: Vec::new(),
+            },
+            Finding {
+                node: DependencyNode {
+                    name: "libc".to_string(),
+                    version: Version::new(0, 2, 180),
+                    is_direct: true,
+                    depth: 1,
+                    dependent_count: 1,
+                    is_registry: true,
+                },
+                risk: RiskScore {
+                    security: 0.0,
+                    version_lag: 2.5,
+                    maintenance: 0.4,
+                    graph_multiplier: 1.0,
+                    total: 15.0,
+                    level: RiskLevel::Low,
+                },
+                advisories: Vec::new(),
+            },
+        ];
+
+        let summary = summarize(346, 1, 1, 0);
+        (findings, meta_map, now, summary)
+    }
+
+    #[test]
+    fn report_snapshot_colored() {
+        let _guard = ColorOverrideGuard::new(true);
+
+        let (findings, meta_map, now, summary) = sample_report();
+        let output = render_to_string(&findings, &meta_map, now, &summary, false, 5.0);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn report_snapshot_uncolored() {
+        let _guard = ColorOverrideGuard::new(false);
+
+        let (findings, meta_map, now, summary) = sample_report();
+        let output = render_to_string(&findings, &meta_map, now, &summary, false, 5.0);
+        assert!(
+            !output.contains('\u{1b}'),
+            "uncolored snapshot must contain no ANSI escapes"
+        );
+        insta::assert_snapshot!(output);
     }
 }

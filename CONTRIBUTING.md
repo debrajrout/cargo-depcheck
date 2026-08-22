@@ -187,10 +187,10 @@ CI runs the same checks on **Linux, macOS, and Windows**.
 
 ```
 src/
-├── main.rs         Five-phase orchestration (graph → crates.io → advisories → score → report)
+├── main.rs         Five-phase orchestration (graph → registry → advisories → score → report)
 ├── cli.rs          Clap arguments + cargo plugin wrapper
 ├── graph.rs        cargo metadata, BFS, DependencyNode
-├── cratesio.rs     crates.io API client
+├── registry.rs     Sparse-index client (crates.io metadata, no rate limit)
 ├── advisories.rs   RustSec database fetch and lookup
 ├── score.rs        RiskScore formula (unit tests here)
 └── report.rs       Terminal boxes + JSON output (unit tests here)

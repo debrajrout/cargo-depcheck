@@ -8,8 +8,8 @@ use semver::Version;
 use serde::Serialize;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::cratesio::Metadata;
 use crate::graph::DependencyNode;
+use crate::registry::Metadata;
 use crate::score::{RiskLevel, RiskScore, DEFAULT_THRESHOLD};
 
 /// Fallback box width when no terminal is attached (e.g. output piped to a

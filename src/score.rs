@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 use rustsec::advisory::{Advisory, Severity};
 use semver::Version;
 
-use crate::cratesio::Metadata;
 use crate::graph::DependencyNode;
+use crate::registry::Metadata;
 
 const MAX_SECURITY: f64 = 50.0;
 const MAX_VERSION_LAG: f64 = 25.0;

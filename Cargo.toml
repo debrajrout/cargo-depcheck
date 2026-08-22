@@ -20,8 +20,10 @@ clap = { version = "4", features = ["derive"] }
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
-# HTTP client for crates.io API
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+# Registry index access (sparse index, no crates.io rate limit) — bring our
+# own TLS-capable client, since tame-index takes no stance on TLS.
+tame-index = { version = "0.26.1", features = ["local", "sparse"] }
+reqwest = { version = "0.13", features = ["rustls", "gzip"], default-features = false }
 
 # Serialization / deserialization
 serde = { version = "1", features = ["derive"] }

@@ -22,7 +22,7 @@ cd your-rust-project
 cargo depcheck
 ```
 
-First run needs network (crates.io + RustSec advisory DB). After that, the advisory DB is cached at `~/.cargo/advisory-db`.
+First run needs network (crates.io's sparse index + RustSec advisory DB). Crate metadata is cached in the same `~/.cargo` index cache your regular `cargo` commands already use, and the advisory DB is cached at `~/.cargo/advisory-db`. Once both are warm, `--offline` skips the network entirely.
 
 **From source:**
 
@@ -84,6 +84,7 @@ Direct dependencies appear **bold** in the report.
 | `--fail-on <none\|warn\|critical>` | Exit non-zero when a finding at/above this level is present (default: `none`) |
 | `--allow-incomplete` | Exit 0 even if crates.io metadata couldn't be fetched for some dependencies |
 | `--color <auto\|always\|never>` | Control colored output (respects `NO_COLOR` / `CLICOLOR_FORCE` in `auto`) |
+| `--offline` | Use only the local sparse-index cache for crate metadata — no network |
 
 ```sh
 cargo depcheck --threshold 30              # see lower-scoring issues

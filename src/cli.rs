@@ -64,6 +64,11 @@ pub struct Args {
     /// terminal detection; an explicit choice here always wins.
     #[arg(long, value_enum, default_value = "auto")]
     pub color: ColorChoice,
+
+    /// Use only the local sparse-index cache for crate metadata — no
+    /// network access. Crates not already cached are reported as unknown.
+    #[arg(long)]
+    pub offline: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]

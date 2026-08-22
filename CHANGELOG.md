@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced the crates.io JSON API with the sparse index (`index.crates.io`)
+  for crate metadata. The JSON API is rate-limited to 1 request/second by
+  crates.io's own policy — the sparse index has no such limit, is faster,
+  and shares its on-disk cache with `~/.cargo` itself. New `--offline` flag
+  reports a full offline result from that cache alone. Maintenance-age
+  scoring now uses each version's own publish time instead of a crate-level
+  timestamp that could be bumped by yanks or metadata edits unrelated to an
+  actual release. `Metadata` also now carries yanked-version and MSRV data,
+  not yet consumed by scoring (P2-2).
+- `src/cratesio.rs` renamed to `src/registry.rs`; fetching is now exposed
+  behind an `IndexSource` trait so tests can stand in a fixture-backed
+  implementation without HTTP mocking.
+
 ### Fixed
+
+- A degraded-network run with exactly one dependency could hang
+  indefinitely: `tame-index`'s bulk fetch applies its per-crate timeout to
+  every crate except the first one it processes, which retries a connect
+  or timeout error forever with no cap. The whole batch is now wrapped in
+  an outer timeout so a genuinely unreachable registry is reported as
+  degraded within a bounded time instead of hanging.
 
 - `Cargo.lock` no longer re-dirties itself on a bare `cargo metadata` (the
   committed `serde_derive → syn` edge had drifted from what the current

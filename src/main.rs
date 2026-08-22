@@ -1,17 +1,15 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Parser;
 use colored::Colorize;
-use indicatif::{ProgressBar, ProgressStyle};
-use tokio::task::JoinSet;
+use registry::IndexSource;
 
 mod advisories;
 mod cli;
-mod cratesio;
 mod graph;
+mod registry;
 mod report;
 mod score;
 
@@ -67,71 +65,53 @@ async fn main() -> Result<()> {
         ),
     );
 
-    // ── Phase 2: fetch crates.io metadata concurrently ───────────────────────
-    // Only registry-published crates have crates.io metadata at all — a git
-    // or path dependency will 404 forever and must not be treated as a
-    // failed fetch (see graph::DependencyNode::is_registry).
-    let unique_names: Vec<String> = {
-        let mut seen = HashSet::new();
-        nodes
-            .iter()
-            .filter(|n| n.is_registry)
-            .filter(|n| seen.insert(n.name.clone()))
-            .map(|n| n.name.clone())
-            .collect()
-    };
+    // ── Phase 2: fetch registry metadata ─────────────────────────────────────
+    // Only registry-published crates have index metadata at all — a git or
+    // path dependency has none by definition and must not be treated as a
+    // failed fetch (see graph::DependencyNode::is_registry). The sparse
+    // index has no documented rate limit (unlike the old JSON API), so
+    // every crate is requested at once rather than throttled.
+    let unique_names: std::collections::BTreeSet<String> = nodes
+        .iter()
+        .filter(|n| n.is_registry)
+        .map(|n| n.name.clone())
+        .collect();
     let attempted = unique_names.len();
 
-    let client = Arc::new(cratesio::build_client()?);
-    let limiter = Arc::new(cratesio::RateLimiter::default());
-
-    let pb = if quiet {
-        ProgressBar::hidden()
-    } else {
-        ProgressBar::new(unique_names.len() as u64)
-    };
-    pb.set_style(
-        ProgressStyle::with_template(
-            "  {spinner:.cyan} Fetching crates.io metadata  \
-             [{bar:40.cyan/237}]  {pos}/{len}  {elapsed_precise}",
-        )
-        .unwrap()
-        .progress_chars("█░ "),
-    );
-
-    let mut set: JoinSet<(String, Result<cratesio::Metadata>)> = JoinSet::new();
-
-    for name in unique_names {
-        let client = client.clone();
-        let limiter = limiter.clone();
-
-        set.spawn(async move {
-            let result = cratesio::fetch(&client, &limiter, &name).await;
-            (name, result)
-        });
+    if !unique_names.is_empty() {
+        status_print(
+            json_mode,
+            quiet,
+            format!(
+                "  {} Fetching registry metadata for {} crates...",
+                "⠋".cyan(),
+                attempted
+            ),
+        );
     }
 
-    let mut meta_map: HashMap<String, cratesio::Metadata> = HashMap::new();
+    let index = registry::SparseRegistry::new(args.offline)?;
+    let raw = index.fetch(unique_names).await;
+
+    let mut meta_map: HashMap<String, registry::Metadata> = HashMap::new();
     let mut unchecked: Vec<String> = Vec::new();
     let mut last_error: Option<String> = None;
-    while let Some(outcome) = set.join_next().await {
-        pb.inc(1);
-        match outcome {
-            Ok((name, Ok(meta))) => {
+    for (name, result) in raw {
+        match result {
+            Ok(Some(meta)) => {
                 meta_map.insert(name, meta);
             }
-            Ok((name, Err(err))) => {
+            Ok(None) => {
+                // Successfully queried the index; this crate genuinely has
+                // no entry (e.g. a rename). Not a data-layer failure.
+            }
+            Err(err) => {
                 last_error = Some(err.to_string());
                 unchecked.push(name);
-            }
-            Err(join_err) => {
-                last_error = Some(join_err.to_string());
             }
         }
     }
     unchecked.sort_unstable();
-
-    pb.finish_and_clear();
 
     if !unchecked.is_empty() {
         let sample: Vec<String> = unchecked.iter().take(3).cloned().collect();

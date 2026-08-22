@@ -174,10 +174,10 @@ pub fn render(
     print_summary(summary);
 
     if quiet {
-        println!();
         return;
     }
 
+    println!();
     let inner_width = detect_inner_width();
 
     let critical: Vec<_> = findings
@@ -295,7 +295,7 @@ fn boxed_line(content: &str, visible_width: usize, inner_width: usize) -> String
 fn print_summary(summary: &ReportSummary) {
     if summary.unknown > 0 {
         println!(
-            "  {} critical  ·  {} warnings  ·  {} unknown  ·  {} healthy\n",
+            "  {} critical  ·  {} warnings  ·  {} unknown  ·  {} healthy",
             summary.critical.to_string().red().bold(),
             summary.warnings.to_string().yellow().bold(),
             summary.unknown.to_string().dimmed(),
@@ -303,7 +303,7 @@ fn print_summary(summary: &ReportSummary) {
         );
     } else {
         println!(
-            "  {} critical  ·  {} warnings  ·  {} healthy\n",
+            "  {} critical  ·  {} warnings  ·  {} healthy",
             summary.critical.to_string().red().bold(),
             summary.warnings.to_string().yellow().bold(),
             summary.healthy.to_string().green(),

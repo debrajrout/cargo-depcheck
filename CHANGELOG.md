@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--version` now works (previously errored with "unexpected argument").
+  `--help` on the bare binary no longer leaks an internal implementation
+  comment as its description. `--quiet` now prints exactly one line instead
+  of ten. Added `--color <auto|always|never>`, honouring `NO_COLOR` and
+  `CLICOLOR_FORCE` per their specs (an empty `NO_COLOR` does not disable
+  color; an explicit `--color` always wins).
 - `cargo depcheck` now exits non-zero on failure instead of always exiting 0.
   Contract: `0` clean · `1` a finding at/above `--fail-on`'s level is present
   · `2` usage error · `3` the data layer was incomplete (crates.io metadata

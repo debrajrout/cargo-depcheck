@@ -21,22 +21,28 @@ async fn main() -> Result<()> {
         cmd: cli::CargoCommand::Depcheck(args),
     } = cli::Cargo::parse();
 
+    resolve_color(args.color);
+
     let json_mode = args.json;
+    let quiet = args.quiet;
     let ignore: HashSet<String> = args.ignore.into_iter().collect();
 
     if args.no_advisories && args.no_fetch {
         status_print(
             json_mode,
+            quiet,
             "note: --no-fetch has no effect with --no-advisories",
         );
     }
 
     status_print(
         json_mode,
+        quiet,
         format!("cargo-depcheck v{}", env!("CARGO_PKG_VERSION")).bold(),
     );
     status_print(
         json_mode,
+        quiet,
         format!(
             "Analyzing {}...\n",
             manifest_display(args.manifest_path.as_deref()).cyan()
@@ -52,6 +58,7 @@ async fn main() -> Result<()> {
 
     status_print(
         json_mode,
+        quiet,
         format!(
             "Found {}  ({} direct · {} transitive)\n",
             format!("{} dependencies", total_dependencies).bold(),
@@ -78,7 +85,11 @@ async fn main() -> Result<()> {
     let client = Arc::new(cratesio::build_client()?);
     let limiter = Arc::new(cratesio::RateLimiter::default());
 
-    let pb = ProgressBar::new(unique_names.len() as u64);
+    let pb = if quiet {
+        ProgressBar::hidden()
+    } else {
+        ProgressBar::new(unique_names.len() as u64)
+    };
     pb.set_style(
         ProgressStyle::with_template(
             "  {spinner:.cyan} Fetching crates.io metadata  \
@@ -126,6 +137,7 @@ async fn main() -> Result<()> {
         let sample: Vec<String> = unchecked.iter().take(3).cloned().collect();
         status_print(
             json_mode,
+            quiet,
             report::degraded_warning(unchecked.len(), attempted, &sample, last_error.as_deref()),
         );
     }
@@ -136,6 +148,7 @@ async fn main() -> Result<()> {
     } else {
         status_print(
             json_mode,
+            quiet,
             format!("  {} Fetching RustSec advisory database...", "⠋".cyan()),
         );
         let load_fn = if args.no_fetch {
@@ -153,14 +166,13 @@ async fn main() -> Result<()> {
         let advisory_index = advisories::index(database, &nodes);
         status_print(
             json_mode,
+            quiet,
             format!(
                 "\r  {} RustSec advisory database ready  ({} affected)",
                 "✓".green(),
                 advisory_index.len()
             ),
         );
-    } else if !args.no_advisories {
-        status_print(json_mode, "\r  ✓ RustSec advisory database ready");
     }
 
     // ── Phase 4: compute risk scores ─────────────────────────────────────────
@@ -279,11 +291,56 @@ fn exit_code(
     i32::from(triggered)
 }
 
-fn status_print(json_mode: bool, message: impl std::fmt::Display) {
+fn status_print(json_mode: bool, quiet: bool, message: impl std::fmt::Display) {
+    if quiet {
+        return;
+    }
     if json_mode {
         eprintln!("{message}");
     } else {
         println!("{message}");
+    }
+}
+
+/// Resolves `--color` against the standard env-var stack, then applies it as
+/// a global override for the `colored` crate. Precedence: an explicit
+/// `--color` always wins; otherwise `NO_COLOR` (present and non-empty)
+/// disables color; otherwise `CLICOLOR_FORCE` (present and non-empty) forces
+/// it on; otherwise an unset `TERM` (not just `TERM=dumb`) disables color —
+/// a case that's easy to miss and that hits CI containers; otherwise
+/// `CLICOLOR=0` disables it; anything left falls through to `colored`'s own
+/// terminal detection. See https://no-color.org/ and
+/// https://bixense.com/clicolors/.
+fn resolve_color(choice: cli::ColorChoice) {
+    match choice {
+        cli::ColorChoice::Always => {
+            colored::control::set_override(true);
+            return;
+        }
+        cli::ColorChoice::Never => {
+            colored::control::set_override(false);
+            return;
+        }
+        cli::ColorChoice::Auto => {}
+    }
+
+    if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+        colored::control::set_override(false);
+        return;
+    }
+
+    if std::env::var_os("CLICOLOR_FORCE").is_some_and(|v| !v.is_empty()) {
+        colored::control::set_override(true);
+        return;
+    }
+
+    if std::env::var_os("TERM").is_none() {
+        colored::control::set_override(false);
+        return;
+    }
+
+    if std::env::var_os("CLICOLOR").is_some_and(|v| v == "0") {
+        colored::control::set_override(false);
     }
 }
 

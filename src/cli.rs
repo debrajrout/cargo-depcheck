@@ -2,11 +2,13 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-/// Outer struct named "cargo" so `cargo depcheck` works as a subcommand.
-/// When cargo invokes a plugin, it passes the subcommand name as the first
-/// argument — e.g. `cargo-depcheck depcheck [args]`. This wrapper absorbs it.
+// Outer struct named "cargo" so `cargo depcheck` works as a subcommand. When
+// cargo invokes a plugin, it passes the subcommand name as the first
+// argument — e.g. `cargo-depcheck depcheck [args]`. This wrapper absorbs it.
+// A plain `//` comment (not `///`) so it never leaks into `--help` output —
+// `about` below pulls the real description from Cargo.toml instead.
 #[derive(Parser)]
-#[command(name = "cargo")]
+#[command(name = "cargo", version, about, long_about = None, propagate_version = true)]
 pub struct Cargo {
     #[command(subcommand)]
     pub cmd: CargoCommand,
@@ -57,6 +59,11 @@ pub struct Args {
     /// (An incomplete data layer exits non-zero regardless — see --allow-incomplete.)
     #[arg(long, value_enum, default_value = "none")]
     pub fail_on: FailOn,
+
+    /// Control colored output. `auto` follows NO_COLOR / CLICOLOR_FORCE /
+    /// terminal detection; an explicit choice here always wins.
+    #[arg(long, value_enum, default_value = "auto")]
+    pub color: ColorChoice,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -67,4 +74,14 @@ pub enum FailOn {
     Warn,
     /// Fail only if a CRITICAL finding is present
     Critical,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ColorChoice {
+    /// Decide from NO_COLOR / CLICOLOR_FORCE / CLICOLOR / terminal detection
+    Auto,
+    /// Always colorize, even when output is piped
+    Always,
+    /// Never colorize
+    Never,
 }

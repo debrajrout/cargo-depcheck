@@ -83,6 +83,7 @@ Direct dependencies appear **bold** in the report.
 | `--manifest-path PATH` | Point at another project |
 | `--fail-on <none\|warn\|critical>` | Exit non-zero when a finding at/above this level is present (default: `none`) |
 | `--allow-incomplete` | Exit 0 even if crates.io metadata couldn't be fetched for some dependencies |
+| `--color <auto\|always\|never>` | Control colored output (respects `NO_COLOR` / `CLICOLOR_FORCE` in `auto`) |
 
 ```sh
 cargo depcheck --threshold 30              # see lower-scoring issues

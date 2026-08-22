@@ -6,7 +6,6 @@ use chrono::Utc;
 use clap::Parser;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
-use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 mod advisories;
@@ -77,7 +76,7 @@ async fn main() -> Result<()> {
     let attempted = unique_names.len();
 
     let client = Arc::new(cratesio::build_client()?);
-    let semaphore = Arc::new(Semaphore::new(5));
+    let limiter = Arc::new(cratesio::RateLimiter::default());
 
     let pb = ProgressBar::new(unique_names.len() as u64);
     pb.set_style(
@@ -93,11 +92,10 @@ async fn main() -> Result<()> {
 
     for name in unique_names {
         let client = client.clone();
-        let sem = semaphore.clone();
+        let limiter = limiter.clone();
 
         set.spawn(async move {
-            let _permit = sem.acquire().await.expect("semaphore closed");
-            let result = cratesio::fetch(&client, &name).await;
+            let result = cratesio::fetch(&client, &limiter, &name).await;
             (name, result)
         });
     }

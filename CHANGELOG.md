@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Git and path dependencies are no longer queried against crates.io (they
   have no registry metadata by definition) and so no longer falsely count
   as fetch failures.
+- crates.io requests are now paced to at most 1/second (previously ~42/s,
+  42x the documented API policy) and retry with backoff on 429, instead of
+  silently dropping the result. The User-Agent contact URL, which pointed
+  at a repository that does not exist, is now derived from
+  `CARGO_PKG_REPOSITORY` so it can't drift from the real one again.
 
 ### Added
 

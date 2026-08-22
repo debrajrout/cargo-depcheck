@@ -20,8 +20,15 @@ pub enum CargoCommand {
     Depcheck(Args),
 }
 
+/// Ranked dependency health: security advisories, version lag, and maintenance signals
 #[derive(Parser)]
 pub struct Args {
+    /// Print a shell completion script or man page instead of running an
+    /// analysis. Hidden from --help since it's a one-off setup step, not
+    /// part of everyday use — same treatment ripgrep/bat give theirs.
+    #[command(subcommand)]
+    pub utility: Option<UtilityCommand>,
+
     /// Path to Cargo.toml (defaults to the nearest one from the current directory)
     #[arg(long, value_name = "PATH")]
     pub manifest_path: Option<PathBuf>,
@@ -103,6 +110,19 @@ pub struct Args {
     /// machine and CI while testing.
     #[arg(long)]
     pub include_dev: bool,
+}
+
+#[derive(Subcommand)]
+pub enum UtilityCommand {
+    /// Print a shell completion script for the given shell to stdout
+    #[command(hide = true)]
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// Print a man page (roff) to stdout
+    #[command(hide = true)]
+    Mangen,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]

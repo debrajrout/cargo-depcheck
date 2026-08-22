@@ -102,6 +102,22 @@ Run `cargo depcheck --help` for the full list.
 
 ---
 
+## Shell completions and man page
+
+```sh
+cargo depcheck completions bash > /usr/local/etc/bash_completion.d/cargo-depcheck
+cargo depcheck completions zsh  > "${fpath[1]}/_cargo-depcheck"
+cargo depcheck completions fish > ~/.config/fish/completions/cargo-depcheck.fish
+
+cargo depcheck mangen > /usr/local/share/man/man1/cargo-depcheck.1   # then: man cargo-depcheck
+```
+
+`elvish` and `powershell` are also supported. Release archives from
+[Releases](https://github.com/debrajrout/cargo-depcheck/releases) ship
+pre-generated copies of both, under `completions/` and `cargo-depcheck.1`.
+
+---
+
 ## Configuration file
 
 Commit a `[package.metadata.depcheck]` table to your `Cargo.toml` so every

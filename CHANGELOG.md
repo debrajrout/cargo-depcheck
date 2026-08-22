@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--locked` and `--frozen` flags**, passed through to `cargo metadata`
   for reproducible-lockfile workflows (`--frozen` implies `--offline` and
   `--locked`).
+- **Shell completions and a man page**: `cargo depcheck completions
+  <bash|elvish|fish|powershell|zsh>` and `cargo depcheck mangen` print a
+  completion script / roff man page to stdout (both hidden from `--help`
+  — one-off setup, not everyday flags). Release archives now bundle
+  pre-generated copies of both alongside the binary.
 - **JSON provenance fields**: `tool_version`, `generated_at`, `project`
   (name + manifest path), and `advisory_db_commit` (the RustSec database
   commit checked against, when advisories were checked at all). A stored

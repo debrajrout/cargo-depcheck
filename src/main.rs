@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use colored::Colorize;
 use registry::IndexSource;
 
@@ -20,6 +20,11 @@ async fn main() -> Result<()> {
     let cli::Cargo {
         cmd: cli::CargoCommand::Depcheck(args),
     } = cli::Cargo::parse();
+
+    if let Some(utility) = args.utility {
+        run_utility_command(utility)?;
+        return Ok(());
+    }
 
     resolve_color(args.color);
 
@@ -420,6 +425,29 @@ fn resolve_color(choice: cli::ColorChoice) {
 fn manifest_display(path: Option<&std::path::Path>) -> String {
     path.map(|p| p.display().to_string())
         .unwrap_or_else(|| "current project".to_string())
+}
+
+/// The invocable name completions and the man page are generated for. Not
+/// `cargo-depcheck depcheck` (the literal argv `cargo` sees when it shells
+/// out to this binary via subprocess) — that's cargo's own plumbing, and
+/// nobody types it. Plugin authors document and generate against the real
+/// entry point instead: the standalone binary name.
+const UTILITY_BIN_NAME: &str = "cargo-depcheck";
+
+fn run_utility_command(utility: cli::UtilityCommand) -> Result<()> {
+    match utility {
+        cli::UtilityCommand::Completions { shell } => {
+            let mut cmd = cli::Args::command().name(UTILITY_BIN_NAME);
+            clap_complete::generate(shell, &mut cmd, UTILITY_BIN_NAME, &mut std::io::stdout());
+        }
+        cli::UtilityCommand::Mangen => {
+            let cmd = cli::Args::command().name(UTILITY_BIN_NAME);
+            clap_mangen::Man::new(cmd)
+                .render(&mut std::io::stdout())
+                .context("failed to render man page")?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -234,3 +234,37 @@ fn yanked_version_is_detected_and_scored() {
         "a yanked version should score at least the High-severity tier: {libc}"
     );
 }
+
+#[test]
+fn completions_emits_a_nonempty_script_for_every_supported_shell() {
+    for shell in ["bash", "elvish", "fish", "powershell", "zsh"] {
+        let assert = depcheck()
+            .args(["depcheck", "completions", shell])
+            .assert()
+            .success();
+        let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        assert!(
+            stdout.contains("cargo-depcheck"),
+            "{shell} completion script should reference the binary name: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn completions_is_hidden_from_help() {
+    depcheck()
+        .args(["depcheck", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("completions").not());
+}
+
+#[test]
+fn mangen_emits_roff_with_the_binary_name() {
+    depcheck()
+        .args(["depcheck", "mangen"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with(".ie"))
+        .stdout(predicate::str::contains("cargo\\-depcheck"));
+}

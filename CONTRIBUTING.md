@@ -105,7 +105,12 @@ after consistent helpful participation.
 
 **Responsibilities:**
 - Review PRs for correctness, scope, and project direction
-- Cut releases and update version/changelog when appropriate
+- Cut releases and update version/changelog when appropriate — tag a commit
+  `vX.Y.Z` and push it; the release workflow builds binaries for all
+  targets, creates the GitHub Release, and publishes to crates.io
+  automatically. **Requires a `CRATES_IO_TOKEN` repository secret** (an
+  API token from https://crates.io/settings/tokens with publish scope for
+  this crate) — not yet configured as of this writing.
 - Enforce Code of Conduct
 - Make final calls on scoring formula changes and breaking JSON schema bumps
 - Welcome new contributors and unblock stuck PRs

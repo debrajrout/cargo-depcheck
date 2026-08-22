@@ -59,3 +59,14 @@ jobs:
           archive: cargo-depcheck-$tag-$target
           checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: publish to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}

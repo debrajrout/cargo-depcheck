@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Release workflow now publishes to crates.io automatically after binaries
+  build successfully for a tagged release, using a `CRATES_IO_TOKEN`
+  repository secret (not yet configured — see CONTRIBUTING.md).
 - Fixed `categories` in `Cargo.toml`: was `["command-line-utilities",
   "development-tools"]`, now includes the canonical
   `development-tools::cargo-plugins` slug — where cargo-audit, cargo-deny,

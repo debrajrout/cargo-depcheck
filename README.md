@@ -104,11 +104,31 @@ Every crate gets 0–100 points from three signals, then multiplied by graph wei
 | Signal | Max | Source |
 |--------|-----|--------|
 | Security | 50 | RustSec advisories (CVE severity, unmaintained, unsound) or a yanked version — whichever is worse |
-| Version lag | 25 | Major/minor versions behind latest stable |
+| Version lag | 25 | Breaking / compatible / patch releases behind latest stable |
 | Maintenance | 15 | Days since last crates.io publish (cap: 2 years) |
 | **× Graph weight** | 1.0–2.0 | More things depend on it → higher urgency |
 
 A stale leaf at the edge of your tree scores lower than the same stale crate holding up 30 others. That's the point.
+
+**Version lag follows Cargo's own compatibility rule, not raw major/minor
+arithmetic.** Below 1.0, the *minor* version is the breaking axis — `0.3.1`
+to `0.4.0` is exactly as incompatible as `1.0.0` to `2.0.0`, and is scored
+the same way. Three tiers, most severe first: breaking releases behind
+(12.5 pts each, capped at 25), then compatible releases behind (2.5 pts
+each, capped at 25), then patch releases behind (0.5 pts each, capped at
+5 — visible, since a security fix often ships as a patch, but never able
+to outweigh a real breaking-version gap).
+
+**When a RustSec advisory has no CVSS score, severity comes from its
+category instead of a flat guess.** 65% of advisories in the database
+(789 of 1,206) have no CVSS score at all, so this is the common case, not
+an edge case. Categories are ranked by this project's own judgment of
+real-world impact (RustSec doesn't rank them itself): malicious code and
+arbitrary code execution score highest; privilege escalation and memory
+corruption next; crypto failures, injection, thread-safety bugs, and file
+disclosure in the middle; memory exposure and denial-of-service lowest. An
+advisory with several categories takes the worst one; one with none at all
+gets a conservative Medium-equivalent default.
 
 **Graph weight is absolute, not relative to your project.** It's a
 saturating function of how many crates depend on this one — directly or

@@ -1,6 +1,6 @@
 ---
 source: src/report.rs
-assertion_line: 841
+assertion_line: 954
 expression: output
 ---
   1 critical  ·  1 warnings  ·  344 healthy
@@ -9,7 +9,7 @@ expression: output
 │  CRITICAL                                                                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ openssl 0.10.45                           94 ███████████░                   │
-│   3 major version(s) behind latest (0.10.45 → 3.0.0)                        │
+│   3 breaking version(s) behind latest (0.10.45 → 3.0.0)                     │
 │   last published 2 years ago                                                │
 │   relied on by 31 crates in your graph, directly or transitively            │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -27,7 +27,7 @@ expression: output
 │  NOTICE                                                                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ libc 0.2.180                              15 ██░░░░░░░░░░                   │
-│   0 minor version(s) behind latest (0.2.180 → 0.2.189)                      │
+│   9 patch version(s) behind latest (0.2.180 → 0.2.189)                      │
 │   last published 20 days ago                                                │
 │   relied on by 1 crate in your graph, directly or transitively              │
 └─────────────────────────────────────────────────────────────────────────────┘

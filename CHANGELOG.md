@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — BREAKING
+
+- **Version-lag scoring now follows Cargo's own compatibility rule.**
+  Below 1.0, minor is the breaking axis — `0.3.1` to `0.4.0` was
+  previously scored as a routine "minor" bump (2.5 pts) despite being
+  exactly as incompatible as `1.0.0` to `2.0.0`; it's now scored as
+  breaking (12.5 pts), matching reality. Real example from this repo:
+  `windows-sys 0.52.0 -> 0.61.2` (9 breaking releases under this rule)
+  moved from NOTICE (29.8) to WARN (44.5).
+- **Patch-only version lag is no longer invisible.** `0.10.45 -> 0.10.99`
+  previously scored exactly 0 — a real gap for a tool whose job is "what
+  should I upgrade next," since security fixes often ship as patches. Now
+  scores up to 5 points, low enough to never rival a real breaking-version
+  gap, but visible.
+- **Multiple advisories on the same crate now compound instead of
+  collapsing to the worst one.** A crate with 3 advisories of equal
+  severity now scores strictly higher than one with a single advisory,
+  via a diminishing-returns accumulation (worst advisory at full weight,
+  each additional one at 30% of the scale before it), still capped at the
+  existing 50-point security ceiling.
+- **Unscored RustSec advisories (no CVSS — 65% of the database) are now
+  severity-ranked by category** instead of one flat, undocumented `35.0`
+  constant that outranked genuinely Medium-severity advisories. See the
+  README's "How scoring works" section for the full category ladder and
+  reasoning.
+- The report's "N major/minor version(s) behind" wording now says
+  "breaking" for a 0.x-incompatible bump, matching the corrected scoring
+  above, and "patch" for the newly-visible patch-lag tier.
+
 ### Added
 
 - **Yanked-version detection.** A pinned version that's been pulled from

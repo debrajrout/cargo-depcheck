@@ -11,6 +11,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::graph::DependencyNode;
 use crate::registry::Metadata;
+use crate::score;
 use crate::score::{RiskLevel, RiskScore, DEFAULT_THRESHOLD};
 
 /// Fallback box width when no terminal is attached (e.g. output piped to a
@@ -609,22 +610,37 @@ fn advisory_line(advisory: &Advisory) -> String {
     format!("advisory: {}", advisory.id().as_str())
 }
 
+/// Wording follows the same Cargo-compatibility split used for scoring
+/// (`score::lag_components`): a 0.x minor bump is described as "breaking,"
+/// matching what it actually is under Cargo's rules, not glossed as
+/// "minor" the way a compatible >=1.0 minor bump is.
 fn version_lag_line(have: &Version, latest: &Version) -> Option<String> {
     if have >= latest {
         return None;
     }
 
-    let major_behind = latest.major.saturating_sub(have.major);
-    if major_behind > 0 {
+    let (breaking, compatible, patch) = score::lag_components(have, latest);
+
+    if breaking > 0 {
         return Some(format!(
-            "{major_behind} major version(s) behind latest ({have} → {latest})"
+            "{breaking} breaking version(s) behind latest ({have} → {latest})"
+        ));
+    }
+    if compatible > 0 {
+        return Some(format!(
+            "{compatible} minor version(s) behind latest ({have} → {latest})"
+        ));
+    }
+    if patch > 0 {
+        return Some(format!(
+            "{patch} patch version(s) behind latest ({have} → {latest})"
         ));
     }
 
-    let minor_behind = latest.minor.saturating_sub(have.minor);
-    Some(format!(
-        "{minor_behind} minor version(s) behind latest ({have} → {latest})"
-    ))
+    // have < latest by prerelease tag alone (e.g. pinned "1.0.0-beta.1" vs a
+    // released "1.0.0") — no numeric component differs, so there's nothing
+    // meaningful to report as a lag count.
+    None
 }
 
 fn maintenance_line(days: i64) -> String {
@@ -680,7 +696,17 @@ mod tests {
         let have = Version::new(0, 10, 45);
         let latest = Version::new(3, 0, 0);
         let line = version_lag_line(&have, &latest).unwrap();
-        assert!(line.contains("3 major"));
+        assert!(line.contains("3 breaking"));
+    }
+
+    #[test]
+    fn version_lag_line_none_when_only_prerelease_tag_differs() {
+        // have < latest (prerelease sorts below the release), but major,
+        // minor, and patch are all identical — nothing numeric to report.
+        let have = Version::parse("1.0.0-beta.1").unwrap();
+        let latest = Version::parse("1.0.0").unwrap();
+        assert!(have < latest);
+        assert!(version_lag_line(&have, &latest).is_none());
     }
 
     /// Ensures `colored::control::set_override` is always undone, even if

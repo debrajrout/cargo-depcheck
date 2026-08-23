@@ -157,9 +157,24 @@ fn warm_up_cache() {
         .expect("warm-up `cargo metadata` failed to even run");
 }
 
+/// `--no-fetch` means "use the cached advisory DB, no git pull" — it
+/// requires that cache to already exist, and errors otherwise (see
+/// `advisories::load_cached`). On a fresh machine or CI runner with no
+/// `~/.cargo/advisory-db`, every test below that passes `--no-fetch`
+/// without this warm-up first fails outright, not just runs slower — this
+/// isolates that one real-network dependency the same way `warm_up_cache`
+/// does for the registry side.
+fn warm_up_advisory_db() {
+    depcheck()
+        .args(["depcheck", "--manifest-path", NO_DEPS_MANIFEST])
+        .output()
+        .expect("warm-up advisory fetch failed to even run");
+}
+
 #[test]
 fn degraded_registry_exits_three() {
     warm_up_cache();
+    warm_up_advisory_db();
     depcheck()
         .env("HTTPS_PROXY", "http://127.0.0.1:9")
         .env("ALL_PROXY", "http://127.0.0.1:9")
@@ -178,6 +193,7 @@ fn degraded_registry_exits_three() {
 #[test]
 fn degraded_registry_with_allow_incomplete_exits_zero() {
     warm_up_cache();
+    warm_up_advisory_db();
     depcheck()
         .env("HTTPS_PROXY", "http://127.0.0.1:9")
         .env("ALL_PROXY", "http://127.0.0.1:9")
@@ -198,6 +214,7 @@ const YANKED_DEP_MANIFEST: &str = "tests/fixtures/yanked-dep/Cargo.toml";
 
 #[test]
 fn yanked_version_is_detected_and_scored() {
+    warm_up_advisory_db();
     let assert = depcheck()
         .args([
             "depcheck",

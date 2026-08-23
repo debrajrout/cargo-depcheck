@@ -16,11 +16,8 @@ One command. One ranked report. Start at the top.
 
 ## Try it
 
-Not yet published to crates.io, so `cargo install cargo-depcheck` isn't
-live yet — install straight from GitHub instead:
-
 ```sh
-cargo install --git https://github.com/debrajrout/cargo-depcheck
+cargo install cargo-depcheck
 cd your-rust-project
 cargo depcheck
 ```
@@ -288,7 +285,7 @@ works" above).
 ## CI without the Action
 
 ```yaml
-- run: cargo install --git https://github.com/debrajrout/cargo-depcheck   # cargo install cargo-depcheck, once published
+- run: cargo install cargo-depcheck
 - run: cargo depcheck --fail-on critical
 ```
 

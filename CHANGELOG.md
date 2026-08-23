@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two transitive RustSec advisories**, caught by `cargo-deny` in CI:
+  `crossbeam-epoch` 0.9.18 → 0.9.20 (RUSTSEC-2026-0204, invalid pointer
+  dereference in a `Debug`/`Display` impl) and `h2` 0.4.15 → 0.4.16
+  (RUSTSEC-2026-0258, unbounded empty DATA frames). Both are patch bumps
+  pulled in transitively (via `rayon`/`tame-index` and
+  `reqwest`/`hyper`/`tame-index` respectively) — no direct dependency or
+  code change needed.
+
 ## [0.2.0] - 2026-08-23
 
 ### Added

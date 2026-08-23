@@ -76,3 +76,17 @@ jobs:
       # `--locked` elsewhere in this workflow can't catch that on its own.
       - run: cargo metadata --format-version 1 > /dev/null
       - run: git diff --exit-code Cargo.lock
+
+  dogfood-action:
+    name: dogfood the published Action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Real end-to-end proof the published Action installs and runs
+      # against a real project, not just a review of action.yml.
+      # fail-on: none so a real finding here never blocks unrelated PRs —
+      # this job exists to catch the Action itself breaking, not to gate
+      # on this repo's own dependency health.
+      - uses: debrajrout/cargo-depcheck@v1
+        with:
+          fail-on: none

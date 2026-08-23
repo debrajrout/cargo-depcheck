@@ -500,6 +500,52 @@ mod tests {
     }
 
     #[test]
+    fn output_validates_against_the_real_sarif_2_1_0_schema() {
+        // The other tests here hand-assert individual invariants (shape,
+        // locations present, levels correct); none of them actually run
+        // our output through the schema our own `$schema` field points
+        // at. This test closes that gap: the schema is the real,
+        // official one — vendored at `tests/schemas/sarif-2.1.0.json`,
+        // fetched from the exact URL in `SARIF_SCHEMA` — not a hand-rolled
+        // stand-in that could drift from what GitHub's own SARIF consumer
+        // actually enforces.
+        let findings = vec![
+            test_finding(
+                "openssl",
+                Version::new(0, 10, 45),
+                RiskLevel::Critical,
+                94.0,
+            ),
+            test_finding("tokio", Version::new(1, 30, 0), RiskLevel::Warn, 55.0),
+            test_finding("syn", Version::new(2, 0, 0), RiskLevel::Low, 10.0),
+        ];
+        let meta_map = HashMap::new();
+        let now = Utc::now();
+        let log = build(
+            &findings,
+            &meta_map,
+            now,
+            Path::new("/nonexistent/Cargo.lock"),
+        );
+        let json = render(&log).unwrap();
+        let instance: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        let schema_str = include_str!("../tests/schemas/sarif-2.1.0.json");
+        let schema: serde_json::Value = serde_json::from_str(schema_str).unwrap();
+        let validator = jsonschema::validator_for(&schema).expect("schema itself must compile");
+
+        let errors: Vec<String> = validator
+            .iter_errors(&instance)
+            .map(|e| format!("{e} (at {})", e.instance_path()))
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "output does not conform to SARIF 2.1.0:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    #[test]
     fn output_is_valid_json_and_serializable() {
         let findings = vec![test_finding(
             "openssl",

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SARIF output now validates against the real, official SARIF 2.1.0
+  JSON schema in a test** (vendored at `tests/schemas/sarif-2.1.0.json`,
+  fetched from the same URL our own `$schema` field points at), not just
+  hand-asserted structural invariants. Verified to actually catch
+  violations, not just pass trivially, by deliberately breaking a field
+  and confirming the test failed before reverting it.
 - **Configuration file support** via `[package.metadata.depcheck]`
   (falling back to `[workspace.metadata.depcheck]`) in `Cargo.toml`:
   `threshold`, `fail_on`, and a per-crate `ignore` list with optional

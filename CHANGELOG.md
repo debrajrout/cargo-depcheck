@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Three integration tests failed on any fresh machine or CI runner** —
+  `degraded_registry_exits_three`, `degraded_registry_with_allow_incomplete_exits_zero`,
+  and `yanked_version_is_detected_and_scored` all pass `--no-fetch`
+  (requires an *existing* cached advisory DB) without ever warming that
+  cache first, unlike the equivalent registry-side warm-up these same
+  tests already had. Reproduced locally by clearing `~/.cargo/advisory-db`
+  before running the suite, and confirmed fixed the same way. This is what
+  actually broke CI on the big implementation-plan merge, not the
+  RustSec-advisory bump below (that only explains the separate
+  `cargo-deny` job failure).
+- **Two transitive RustSec advisories**, caught by `cargo-deny` in CI:
+  `crossbeam-epoch` 0.9.18 → 0.9.20 (RUSTSEC-2026-0204, invalid pointer
+  dereference in a `Debug`/`Display` impl) and `h2` 0.4.15 → 0.4.16
+  (RUSTSEC-2026-0258, unbounded empty DATA frames). Both are patch bumps
+  pulled in transitively (via `rayon`/`tame-index` and
+  `reqwest`/`hyper`/`tame-index` respectively) — no direct dependency or
+  code change needed.
+
 ## [0.2.0] - 2026-08-23
 
 ### Added

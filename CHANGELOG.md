@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CI now dogfoods the published GitHub Action** (`debrajrout/cargo-depcheck@v1`)
+  against this repo on every push/PR — real proof the Action installs and
+  runs, not just a review of `action.yml`. `fail-on: none` so a real
+  finding here never blocks unrelated PRs.
 - **SARIF output now validates against the real, official SARIF 2.1.0
   JSON schema in a test** (vendored at `tests/schemas/sarif-2.1.0.json`,
   fetched from the same URL our own `$schema` field points at), not just

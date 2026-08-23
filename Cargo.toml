@@ -1,6 +1,6 @@
 [package]
 name = "cargo-depcheck"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.91"
 description = "Ranked dependency health report — security advisories, version lag, and maintenance signals weighted by graph depth"
@@ -10,18 +10,22 @@ homepage = "https://github.com/debrajrout/cargo-depcheck"
 documentation = "https://github.com/debrajrout/cargo-depcheck#readme"
 readme = "README.md"
 keywords = ["cargo", "dependencies", "security", "audit", "maintenance"]
-categories = ["command-line-utilities", "development-tools"]
-exclude = [".github/", "tests/fixtures/"]
+categories = ["command-line-utilities", "development-tools::cargo-plugins"]
+exclude = [".github/", "tests/fixtures/", "tests/schemas/"]
 
 [dependencies]
 # CLI argument parsing
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4.6.9"
+clap_mangen = "0.3.3"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
-# HTTP client for crates.io API
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+# Registry index access (sparse index, no crates.io rate limit) — bring our
+# own TLS-capable client, since tame-index takes no stance on TLS.
+tame-index = { version = "0.26.1", features = ["local", "sparse"] }
+reqwest = { version = "0.13", features = ["rustls", "gzip"], default-features = false }
 
 # Serialization / deserialization
 serde = { version = "1", features = ["derive"] }
@@ -42,13 +46,25 @@ chrono = { version = "0.4", features = ["serde"] }
 # Error handling
 anyhow = "1"
 
-# Terminal progress bar
-indicatif = "0.18"
-
 # Terminal colors
 colored = "3"
+unicode-width = "0.2"
+terminal_size = "0.4"
 
 [profile.release]
 strip = true
 lto = true
 codegen-units = 1
+
+# Snapshot diffing (insta -> similar) is slow in debug; cargo-deny does the same.
+[profile.dev.package.insta]
+opt-level = 3
+
+[profile.dev.package.similar]
+opt-level = 3
+
+[dev-dependencies]
+assert_cmd = "2"
+insta = "1"
+jsonschema = "0.50.1"
+predicates = "3"

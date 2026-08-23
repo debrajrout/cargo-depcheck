@@ -1,0 +1,209 @@
+name: 'cargo-depcheck'
+description: 'Ranked dependency health: security advisories, version lag, and maintenance signals weighted by graph depth'
+author: 'debrajrout'
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  version:
+    description: 'cargo-depcheck release tag to install (e.g. v0.2.0). Defaults to the latest release.'
+    required: false
+    default: 'latest'
+  manifest-path:
+    description: 'Path to Cargo.toml (defaults to the nearest one from the working directory)'
+    required: false
+    default: ''
+  threshold:
+    description: 'Only report dependencies scoring at or above this value (tool default: 40)'
+    required: false
+    default: ''
+  fail-on:
+    description: 'Fail the job when a finding at or above this level is present: none, warn, or critical'
+    required: false
+    default: 'critical'
+  ignore:
+    description: 'Space-separated crate names to skip'
+    required: false
+    default: ''
+  allow-incomplete:
+    description: 'Do not fail the job when crates.io metadata could not be fetched for some dependencies'
+    required: false
+    default: 'false'
+  summary:
+    description: 'Write a Markdown summary table to the job summary'
+    required: false
+    default: 'true'
+  sarif:
+    description: >-
+      Also upload findings to the GitHub Security tab as SARIF. Requires
+      `security-events: write` permission on the calling workflow/job.
+    required: false
+    default: 'false'
+  sarif-category:
+    description: 'SARIF upload category, useful when running this action more than once in the same workflow'
+    required: false
+    default: ''
+
+outputs:
+  critical:
+    description: 'Number of CRITICAL findings'
+    value: ${{ steps.run.outputs.critical }}
+  warnings:
+    description: 'Number of WARN findings'
+    value: ${{ steps.run.outputs.warnings }}
+  unknown:
+    description: 'Number of dependencies with no usable data (fetch failure or non-registry source)'
+    value: ${{ steps.run.outputs.unknown }}
+  healthy:
+    description: 'Number of healthy dependencies'
+    value: ${{ steps.run.outputs.healthy }}
+  report-path:
+    description: 'Path to the full JSON report on disk'
+    value: ${{ steps.run.outputs.report-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install cargo-depcheck
+      shell: bash
+      env:
+        CARGO_DEPCHECK_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        version="$CARGO_DEPCHECK_VERSION"
+        if [ "$version" = "latest" ]; then
+          version=$(curl -fsSL https://api.github.com/repos/debrajrout/cargo-depcheck/releases/latest | jq -r .tag_name)
+        fi
+
+        os="$(uname -s)"
+        arch="$(uname -m)"
+        ext="tar.gz"
+        bin_name="cargo-depcheck"
+        case "$os-$arch" in
+          Linux-x86_64)   target="x86_64-unknown-linux-musl" ;;
+          Linux-aarch64)  target="aarch64-unknown-linux-musl" ;;
+          Darwin-x86_64)  target="x86_64-apple-darwin" ;;
+          Darwin-arm64)   target="aarch64-apple-darwin" ;;
+          MINGW*|MSYS*|CYGWIN*)
+            target="x86_64-pc-windows-msvc"
+            ext="zip"
+            bin_name="cargo-depcheck.exe"
+            ;;
+          *)
+            echo "::error::Unsupported platform: $os-$arch"
+            exit 1
+            ;;
+        esac
+
+        url="https://github.com/debrajrout/cargo-depcheck/releases/download/${version}/cargo-depcheck-${version}-${target}.${ext}"
+        install_dir="$RUNNER_TEMP/cargo-depcheck-bin"
+        mkdir -p "$install_dir"
+        archive="$RUNNER_TEMP/cargo-depcheck.$ext"
+
+        echo "Downloading $url"
+        curl -fsSL "$url" -o "$archive"
+
+        if [ "$ext" = "zip" ]; then
+          unzip -q "$archive" -d "$install_dir"
+        else
+          tar -xzf "$archive" -C "$install_dir"
+        fi
+        chmod +x "$install_dir/$bin_name" 2>/dev/null || true
+
+        echo "$install_dir" >> "$GITHUB_PATH"
+
+    # Runs (and, if it finds nothing to upload, is skipped) before the gating
+    # run below, so a SARIF upload always happens even when --fail-on later
+    # fails the job — that's the point of surfacing findings in the Security
+    # tab, not something that should be skipped because the job also failed.
+    - name: Generate SARIF report
+      if: inputs.sarif == 'true'
+      id: sarif
+      shell: bash
+      continue-on-error: true
+      env:
+        INPUT_MANIFEST_PATH: ${{ inputs.manifest-path }}
+        INPUT_THRESHOLD: ${{ inputs.threshold }}
+        INPUT_IGNORE: ${{ inputs.ignore }}
+      run: |
+        set -uo pipefail
+        args=(depcheck --format sarif --fail-on none)
+        [ -n "$INPUT_MANIFEST_PATH" ] && args+=(--manifest-path "$INPUT_MANIFEST_PATH")
+        [ -n "$INPUT_THRESHOLD" ] && args+=(--threshold "$INPUT_THRESHOLD")
+        for crate in $INPUT_IGNORE; do
+          args+=(--ignore "$crate")
+        done
+
+        sarif_path="$RUNNER_TEMP/cargo-depcheck.sarif"
+        cargo-depcheck "${args[@]}" >"$sarif_path" 2>"$RUNNER_TEMP/cargo-depcheck-sarif-stderr.log"
+        cat "$RUNNER_TEMP/cargo-depcheck-sarif-stderr.log" >&2
+        echo "sarif-path=$sarif_path" >>"$GITHUB_OUTPUT"
+
+    - name: Upload SARIF to the Security tab
+      if: inputs.sarif == 'true' && steps.sarif.outputs.sarif-path != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.sarif.outputs.sarif-path }}
+        category: ${{ inputs.sarif-category }}
+
+    - name: Run cargo-depcheck
+      id: run
+      shell: bash
+      env:
+        INPUT_MANIFEST_PATH: ${{ inputs.manifest-path }}
+        INPUT_THRESHOLD: ${{ inputs.threshold }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_IGNORE: ${{ inputs.ignore }}
+        INPUT_ALLOW_INCOMPLETE: ${{ inputs.allow-incomplete }}
+        INPUT_SUMMARY: ${{ inputs.summary }}
+      run: |
+        set -uo pipefail
+
+        args=(depcheck --json)
+        [ -n "$INPUT_MANIFEST_PATH" ] && args+=(--manifest-path "$INPUT_MANIFEST_PATH")
+        [ -n "$INPUT_THRESHOLD" ] && args+=(--threshold "$INPUT_THRESHOLD")
+        [ -n "$INPUT_FAIL_ON" ] && args+=(--fail-on "$INPUT_FAIL_ON")
+        [ "$INPUT_ALLOW_INCOMPLETE" = "true" ] && args+=(--allow-incomplete)
+        for crate in $INPUT_IGNORE; do
+          args+=(--ignore "$crate")
+        done
+
+        report_path="$RUNNER_TEMP/cargo-depcheck-report.json"
+        cargo-depcheck "${args[@]}" >"$report_path" 2>"$RUNNER_TEMP/cargo-depcheck-stderr.log"
+        code=$?
+        cat "$RUNNER_TEMP/cargo-depcheck-stderr.log" >&2
+
+        # jq on an empty or unreadable file exits 0 with empty output (not an
+        # error) — a plain `|| fallback` never triggers for that case, so the
+        # empty-string check below is load-bearing, not defensive filler.
+        extract() {
+          local value
+          value=$(jq -r ".summary.$1 // \"unknown\"" "$report_path" 2>/dev/null)
+          echo "${value:-unknown}"
+        }
+        critical=$(extract critical)
+        warnings=$(extract warnings)
+        unknown_count=$(extract unknown)
+        healthy=$(extract healthy)
+
+        {
+          echo "critical=$critical"
+          echo "warnings=$warnings"
+          echo "unknown=$unknown_count"
+          echo "healthy=$healthy"
+          echo "report-path=$report_path"
+        } >>"$GITHUB_OUTPUT"
+
+        if [ "$INPUT_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+          {
+            echo "### cargo-depcheck"
+            echo
+            echo "| critical | warnings | unknown | healthy |"
+            echo "|---|---|---|---|"
+            echo "| $critical | $warnings | $unknown_count | $healthy |"
+          } >>"$GITHUB_STEP_SUMMARY"
+        fi
+
+        exit "$code"

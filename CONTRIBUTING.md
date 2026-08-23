@@ -105,10 +105,20 @@ after consistent helpful participation.
 
 **Responsibilities:**
 - Review PRs for correctness, scope, and project direction
-- Cut releases and update version/changelog when appropriate
+- Cut releases and update version/changelog when appropriate — tag a commit
+  `vX.Y.Z` and push it; the release workflow builds binaries for all
+  targets, creates the GitHub Release, and publishes to crates.io
+  automatically. **Requires a `CRATES_IO_TOKEN` repository secret** (an
+  API token from https://crates.io/settings/tokens with publish scope for
+  this crate) — not yet configured as of this writing.
 - Enforce Code of Conduct
 - Make final calls on scoring formula changes and breaking JSON schema bumps
 - Welcome new contributors and unblock stuck PRs
+- After the **first** tagged release exists, create and push a floating
+  `v1` tag pointing at it (`git tag -f v1 v0.2.0 && git push -f origin v1`),
+  and move `v1` forward after each subsequent v1.x.y release. This is what
+  makes `uses: debrajrout/cargo-depcheck@v1` (see `action.yml`, README)
+  resolve to a real release instead of erroring — it doesn't exist yet.
 
 **Becoming a maintainer:** there is no application form. Long-term contributors
 who review others' work, improve docs, and show good judgment may be invited.
@@ -123,7 +133,7 @@ Ask if you are interested after several merged contributions.
 | 5 minutes | Fix a typo in README, improve an error message |
 | 30 minutes | Add a unit test in `score.rs` or `report.rs` |
 | 1 hour | Reproduce and fix a `good first issue` bug |
-| An afternoon | Integration test fixtures (stubbed HTTP — see [future work](#areas-we-especially-welcome-help-with)) |
+| An afternoon | Vendor a trimmed OSV advisory-DB fixture so RustSec-related tests stop needing the live database (see [future work](#areas-we-especially-welcome-help-with)) |
 | Ongoing interest | Become a triager; review open PRs |
 
 ### Areas we especially welcome help with
@@ -131,12 +141,10 @@ Ask if you are interested after several merged contributions.
 These are **not blockers** — the tool works today — but they would help the
 project mature:
 
-1. **`[package.metadata.depcheck]` config** — per-project threshold and ignore list in `Cargo.toml`
-2. **Integration test fixtures** — `tests/fixtures/` with stubbed crates.io / RustSec (no live network in CI)
-3. **Scoring feedback** — real projects where ranking feels wrong; we tune weights together
-4. **Docs & examples** — blog-style "how we use depcheck in CI" snippets
-5. **Accessibility** — color-blind-friendly output, `--no-color` respect
-6. **SARIF / delta mode** — see open feature requests
+1. **Offline advisory fixtures** — `tests/fixtures/` already covers the dependency graph (see `graph.rs`'s tests) and CLI behavior with no live network; RustSec-specific scenarios (a known-vulnerable pin, a yanked version) still rely on the real cached advisory DB
+2. **Scoring feedback** — real projects where ranking feels wrong; we tune weights together
+3. **Docs & examples** — blog-style "how we use depcheck in CI" snippets
+4. **Delta mode** — diff two reports (e.g. before/after a `cargo update`) — see open feature requests
 
 Comment on an issue or open a new one before starting large work.
 
@@ -187,19 +195,24 @@ CI runs the same checks on **Linux, macOS, and Windows**.
 
 ```
 src/
-├── main.rs         Five-phase orchestration (graph → crates.io → advisories → score → report)
+├── main.rs         Five-phase orchestration (graph → registry → advisories → score → report)
 ├── cli.rs          Clap arguments + cargo plugin wrapper
-├── graph.rs        cargo metadata, BFS, DependencyNode
-├── cratesio.rs     crates.io API client
+├── graph.rs        cargo metadata, BFS, DependencyNode (unit tests here, against tests/fixtures/)
+├── registry.rs     Sparse-index client (crates.io metadata, no rate limit; unit tests here)
 ├── advisories.rs   RustSec database fetch and lookup
 ├── score.rs        RiskScore formula (unit tests here)
-└── report.rs       Terminal boxes + JSON output (unit tests here)
+└── report.rs       Terminal boxes + JSON output (unit + snapshot tests here)
+
+tests/
+├── cli.rs          End-to-end CLI behavior via the real binary (assert_cmd)
+└── fixtures/       Local-path-only Cargo workspaces the tests above resolve
+                     against — no network needed to run `cargo metadata` on them
 ```
 
 **Pipeline:**
 
 ```
-graph → crates.io → advisories → score → report
+graph → registry → advisories → score → report
 ```
 
 Read [README.md](README.md) for user-facing behavior and scoring tables.
@@ -223,8 +236,13 @@ These match how the existing code is written:
 ### Design decisions — please don't reverse without discussion
 
 - Use `cargo_metadata`, not raw `Cargo.lock` parsing (need dependency edges)
-- Only **Normal** dependency edges for depth and `dependent_count`
-- crates.io concurrency capped at **5** (rate limit friendly)
+- **Normal** dependency edges only for depth and `dependent_count` by
+  default; `--include-build`/`--include-dev` opt into Build/Dev edges too
+  (see `graph::KindOptions`), but the default graph never changes shape
+  based on those flags being absent
+- No crates.io fetch concurrency cap — the sparse index (via `tame-index`)
+  has no documented rate limit, unlike the old JSON API this project used
+  to hit; every crate is requested at once
 - Per-crate fetch errors are **silently skipped** (git/path deps won't crash the run)
 - `rustsec` **0.33+** required (CVSS 4.0 advisories in current advisory-db)
 

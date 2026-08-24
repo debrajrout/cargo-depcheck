@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-24
+
 ### Changed
 
 - **~35% faster.** The registry fetch and the RustSec advisory fetch need
@@ -431,5 +433,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependabot for `cargo` and `github-actions` dependency updates.
 - Contribution guides, issue/PR templates, CODEOWNERS, and Code of Conduct.
 
-[Unreleased]: https://github.com/debrajrout/cargo-depcheck/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/debrajrout/cargo-depcheck/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/debrajrout/cargo-depcheck/releases/tag/v0.3.0
 [0.2.0]: https://github.com/debrajrout/cargo-depcheck/releases/tag/v0.2.0

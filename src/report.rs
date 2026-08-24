@@ -22,6 +22,10 @@ const MAX_INNER_WIDTH: usize = 120;
 /// Space taken by the box's own `│ │` border characters.
 const BORDER_OVERHEAD: usize = 2;
 const NAME_FIELD_WIDTH: usize = 41;
+/// Columns a finding's header spends on everything except the name field:
+/// a leading space, the 3-column score, a space, the 3-column severity
+/// marker, a space, and the 12-column bar.
+const HEADER_FIXED_WIDTH: usize = 1 + 3 + 1 + 3 + 1 + 12;
 /// Columns a wrapped reason line's continuation is indented by, so a
 /// continuation reads as part of the line above rather than as a new reason.
 const CONTINUATION_INDENT: usize = 5;
@@ -139,11 +143,7 @@ pub fn degraded_warning(
     sample: &[String],
     last_error: Option<&str>,
 ) -> String {
-    let noun = if unchecked_count == 1 {
-        "crate"
-    } else {
-        "crates"
-    };
+    let noun = crate::plural(unchecked_count, "crate", "crates");
     let mut msg = format!(
         "  {} {} of {attempted} {noun} could not be checked (network error) — results are incomplete",
         "⚠".yellow().bold(),
@@ -207,11 +207,7 @@ pub fn duplicates_line(duplicates: &[JsonDuplicate]) -> Option<String> {
     }
 
     const SHOWN: usize = 3;
-    let noun = if duplicates.len() == 1 {
-        "crate"
-    } else {
-        "crates"
-    };
+    let noun = crate::plural(duplicates.len(), "crate", "crates");
     let shown: Vec<String> = duplicates
         .iter()
         .take(SHOWN)
@@ -670,7 +666,7 @@ fn write_finding(
     now: DateTime<Utc>,
     inner_width: usize,
 ) {
-    let (header, visible_width) = build_header(finding, level);
+    let (header, visible_width) = build_header(finding, level, inner_width);
     writeln!(out, "{}", boxed_line(&header, visible_width, inner_width)).unwrap();
 
     for line in reason_lines(
@@ -691,10 +687,17 @@ fn write_finding(
 /// width measured from the *unstyled* text. Split out from `render_finding`
 /// so the same construction is exercised directly in tests — this is the
 /// exact code path where colored/bold rows previously misaligned the box.
-fn build_header(finding: &Finding, level: RiskLevel) -> (String, usize) {
+fn build_header(finding: &Finding, level: RiskLevel, inner_width: usize) -> (String, usize) {
+    // Everything to the right of the name is fixed-width, so the name field
+    // is what has to give on a narrow terminal. Holding it at a constant 41
+    // overflowed the box by 2 columns at `MIN_INNER_WIDTH` — the header was
+    // the one row `wrap_to_width` doesn't cover, since it is a laid-out
+    // row rather than flowing text.
+    let name_width = NAME_FIELD_WIDTH.min(inner_width.saturating_sub(HEADER_FIXED_WIDTH));
+
     let name_ver = format!("{} {}", finding.node.name, finding.node.version);
-    let name_field = ellipsize(&name_ver, NAME_FIELD_WIDTH);
-    let padded_name = format!(" {}", pad_to_width(&name_field, NAME_FIELD_WIDTH));
+    let name_field = ellipsize(&name_ver, name_width);
+    let padded_name = format!(" {}", pad_to_width(&name_field, name_width));
 
     let score_text = format!("{:>3.0}", finding.risk.total);
     let bar = score_bar(finding.risk.total, 12);
@@ -1001,7 +1004,7 @@ mod tests {
         ];
 
         for finding in &cases {
-            let (header, visible_width) = build_header(finding, finding.risk.level);
+            let (header, visible_width) = build_header(finding, finding.risk.level, INNER);
             let line = boxed_line(&header, visible_width, INNER);
             let stripped = strip_ansi(&line);
             assert_eq!(
@@ -1069,9 +1072,9 @@ mod tests {
 
     #[test]
     fn no_rendered_row_ever_exceeds_the_box_width() {
-        // The regression this whole wrap exists for: every emitted row must
-        // measure exactly `inner_width + 2` once ANSI is stripped, including
-        // reason lines long enough to have overflowed before.
+        // Every emitted row must measure exactly `inner_width + 2` once ANSI
+        // is stripped, including reason lines long enough to have overflowed
+        // before wrapping existed.
         let _guard = ColorOverrideGuard::new(false);
 
         const INNER: usize = 77;
@@ -1087,6 +1090,57 @@ mod tests {
                 INNER + 2,
                 "row is not exactly the box width: {row:?}"
             );
+        }
+    }
+
+    #[test]
+    fn rows_stay_inside_the_box_at_every_supported_width() {
+        // The test above pins only the default 77. That is exactly how the
+        // header overflow at `MIN_INNER_WIDTH` survived: the header is a
+        // laid-out row, not flowing text, so `wrap_to_width` never touched
+        // it, and its name field was a fixed 41 columns no matter how narrow
+        // the terminal got. Sweep the whole supported range instead, with
+        // content long enough to stress both the header and the reasons.
+        let _guard = ColorOverrideGuard::new(false);
+
+        let (findings, meta_map, now, _) = sample_report();
+        let long = Finding {
+            node: DependencyNode {
+                name: "a-crate-with-a-deliberately-very-long-name-for-this-test".to_string(),
+                version: Version::parse("0.11.1+wasi-snapshot-preview1").unwrap(),
+                is_direct: true,
+                depth: 1,
+                dependent_count: 3,
+                transitive_dependent_count: 26,
+                is_registry: true,
+                kind: crate::graph::NodeKind::Normal,
+            },
+            risk: RiskScore {
+                security: 0.0,
+                version_lag: 25.0,
+                maintenance: 15.0,
+                graph_multiplier: 1.4,
+                total: 56.0,
+                level: RiskLevel::Warn,
+            },
+            advisories: Vec::new(),
+        };
+
+        for inner in MIN_INNER_WIDTH..=MAX_INNER_WIDTH {
+            let mut out = String::new();
+            write_finding(&mut out, &long, RiskLevel::Warn, &meta_map, now, inner);
+            for f in &findings {
+                write_finding(&mut out, f, f.risk.level, &meta_map, now, inner);
+            }
+
+            for row in out.lines() {
+                assert_eq!(
+                    strip_ansi(row).width(),
+                    inner + 2,
+                    "row is {} cols in a {inner}-col box: {row:?}",
+                    strip_ansi(row).width()
+                );
+            }
         }
     }
 
@@ -1262,7 +1316,7 @@ mod tests {
             (RiskLevel::Low, "[N]"),
         ] {
             let finding = test_finding("some-crate", false, level, 50.0);
-            let (header, _) = build_header(&finding, level);
+            let (header, _) = build_header(&finding, level, 77);
             assert!(
                 header.contains(marker),
                 "{level:?} row must carry {marker:?} even with color off: {header:?}"

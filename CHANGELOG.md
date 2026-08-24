@@ -19,6 +19,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`--offline` still went to the network.** It suppressed the registry
+  fetch but not the RustSec advisory git fetch, which keyed off `--no-fetch`
+  alone — so on a genuinely disconnected machine the flag documented as
+  "skips the network entirely" aborted the run instead of producing a
+  report. Verified by backdating the advisory cache's `FETCH_HEAD` and
+  watching it get rewritten. `--offline` now implies the cached advisory DB.
+- **`--offline` reported uncached crates as healthy.** A cache miss returned
+  the same "not in the registry" result as a genuine 404, so those crates
+  never entered the unchecked set: no degraded warning, exit 0, and — since
+  version-lag and maintenance both fall back to zero without metadata — a
+  stale dependency scored clean. Against a cold cache that turned an entire
+  tree into a false all-clear. A miss is now an error, which is what the
+  degraded path and exit code 3 exist for.
+- **A failed advisory fetch exited 1 instead of 3.** Exit 1 is reserved for
+  "a finding at or above `--fail-on`", so a transient GitHub outage was
+  indistinguishable from a real critical finding in CI, and
+  `--allow-incomplete` had no effect on it. It is an incomplete data layer,
+  the same as the registry half, and now exits 3 and honours
+  `--allow-incomplete`.
+- **The report box broke at narrow terminal widths.** Reason lines were
+  fixed earlier, but the header row lays itself out rather than flowing, and
+  held its name field at a constant 41 columns however narrow the box got —
+  overflowing by 2 at the 60-column minimum. The width sweep that would have
+  caught this now runs over the whole supported range instead of only the
+  77-column default.
+- **"Found 1 dependencies".** The report already pluralises its own counts,
+  so the summary line disagreeing with them read as a bug in the tool.
+- **`sarif: true` could fail the job even with `fail-on: none`.** The SARIF
+  step published its output path unconditionally, so a run that failed
+  before rendering left a 0-byte file that the upload step — which is not
+  `continue-on-error` — rejected, failing the whole job. The path is now
+  published only when a usable report exists.
+- **The release was published before its assets existed.** `gh release
+  create` ran without `--draft`, so for the several minutes the matrix took
+  to build, `/releases/latest` already pointed at the new tag and the
+  action's default `version: latest` resolved to a release with nothing to
+  download. It is now created as a draft and published only after every
+  archive is attached, which also stops a partially-failed matrix from ever
+  becoming "latest".
+- **The Action had no real test.** CI's dogfood job used the published `@v1`,
+  so a pull request that broke `action.yml` merged green. It now runs `./`,
+  the action in the checkout under test.
+- **`version: latest` had no auth or diagnostics.** The unauthenticated
+  GitHub API allows 60 requests/hr per runner IP; exceeding it surfaced as a
+  bare `curl` exit with no explanation. It now uses the job token by default
+  (new optional `token` input) and reports a clear error if the lookup fails.
 - **Dependent counts were inflated by packages not in the report**, which
   also inflated the graph multiplier derived from them. Reverse edges were
   built from every package in the resolved graph, including ones the kind

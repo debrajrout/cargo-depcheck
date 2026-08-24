@@ -14,7 +14,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --generate-notes
+      # Created as a DRAFT and published only once every archive has been
+      # attached (see `finalize-release`). A published release with no assets
+      # is immediately visible to `/releases/latest`, which is what the
+      # action's `version: latest` resolves against — so publishing up front
+      # meant every consumer who ran during the build window resolved to the
+      # new tag and then 404'd on the download. Drafts are excluded from that
+      # endpoint, which also means a partially-failed matrix never becomes
+      # the "latest" release.
+      - run: gh release create "${{ github.ref_name }}" --draft --title "${{ github.ref_name }}" --generate-notes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -91,9 +99,22 @@ jobs:
           include: dist/cargo-depcheck.1,dist/completions/cargo-depcheck.bash,dist/completions/cargo-depcheck.elvish,dist/completions/cargo-depcheck.fish,dist/completions/cargo-depcheck.powershell,dist/completions/cargo-depcheck.zsh
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  # Only now is every archive attached, so the release is safe to publish.
+  # Until this runs, `/releases/latest` still points at the previous release
+  # and existing users keep getting a version whose assets actually exist.
+  finalize-release:
+    name: publish the draft release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: gh release edit "${{ github.ref_name }}" --draft=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   publish:
     name: publish to crates.io
-    needs: build
+    needs: finalize-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

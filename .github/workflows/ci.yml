@@ -82,11 +82,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Real end-to-end proof the published Action installs and runs
-      # against a real project, not just a review of action.yml.
-      # fail-on: none so a real finding here never blocks unrelated PRs —
-      # this job exists to catch the Action itself breaking, not to gate
-      # on this repo's own dependency health.
-      - uses: debrajrout/cargo-depcheck@v1
+      # `./` runs the action.yml in *this* checkout, so a PR that breaks the
+      # action fails here. Pointing at the published @v1 instead would only
+      # ever re-test the last release, letting a broken action.yml merge
+      # green — the action has no other test.
+      #
+      # fail-on: none so a real dependency finding never blocks an unrelated
+      # PR; this job exists to catch the action breaking, not to gate on this
+      # repo's own dependency health.
+      - uses: ./
         with:
           fail-on: none

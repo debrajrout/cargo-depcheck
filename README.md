@@ -7,11 +7,16 @@
 
 **Your dependency tree has 300 crates. You have time for three.**
 
-`cargo audit` finds CVEs. `cargo outdated` finds stale versions. Both give
-you a list — neither tells you what to fix **first**.
+`cargo-depcheck` is a dependency-health report for Rust projects. It combines
+RustSec advisories, version lag, maintenance activity, and dependency-graph
+impact into one ranked list.
 
-`cargo depcheck` ranks every problem by how much it actually matters: how
-severe it is, *and* how much of your tree depends on the crate it's in.
+`cargo audit` answers “is this vulnerable?” and `cargo outdated` answers “is
+this old?”. `cargo depcheck` answers the follow-up question:
+
+> Which dependency deserves attention first?
+
+## Quick start
 
 ```sh
 cargo install cargo-depcheck
@@ -19,67 +24,81 @@ cd your-rust-project
 cargo depcheck
 ```
 
----
+The first run downloads registry metadata and the RustSec advisory database.
+Later runs reuse Cargo's caches.
 
-## What you get
+## Reading the report
 
-Real output, from running it on this repo:
+This is an abbreviated report from this repository:
 
-```
+```text
 $ cargo depcheck
 
 Found 345 dependencies  (16 direct · 329 transitive)
 
   ✓ RustSec advisory database ready  (0 affected)
-  0 critical  ·  3 warnings  ·  342 healthy
+  0 critical  ·  3 warnings  ·  342 notices  ·  0 healthy
   ⚠ 9 crates resolve at multiple versions: bitflags (1.3.2, 2.13.0), cpufeatures (0.2.17, 0.3.0), getrandom (0.2.17, 0.4.3) (+ 6 more)
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  WARN                                                                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ wasi 0.11.1+wasi-snapshot-preview1        46 [W] ██████░░░░░░               │
+│ wasi 0.11.1+wasi-snapshot-preview1        46.4 [W] ██████░░░░░░             │
 │   3 breaking version(s) behind latest (0.11.1+wasi-snapshot-preview1 →      │
 │        0.14.7+wasi-0.2.4)                                                   │
-│   last published 342 days ago                                               │
+│   latest crate release published 342 days ago                               │
 │   relied on by 25 crates in your graph, directly or transitively            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ allocator-api2 0.2.21                     45 [W] █████░░░░░░░               │
-│   2 breaking version(s) behind latest (0.2.21 → 0.4.0)                      │
-│   last published 255 days ago                                               │
-│   relied on by 37 crates in your graph, directly or transitively            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ windows-sys 0.52.0                        45 [W] █████░░░░░░░               │
-│   9 breaking version(s) behind latest (0.52.0 → 0.61.2)                     │
-│   last published 321 days ago                                               │
-│   relied on by 15 crates in your graph, directly or transitively            │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Every finding tells you **why** it ranked where it did.
+The score is not a vulnerability severity score. It is a prioritization
+score: a stale crate deep in the graph can rank above a stale leaf because
+more of the project depends on it.
 
-| Section | Score | What to do |
-|---------|-------|------------|
-| **CRITICAL** | > 70 | Fix soon |
-| **WARN** | 40–70 | Worth a look this sprint |
-| *(hidden)* | < 40 | Use `--threshold` to see these |
+| Level | Score | Suggested response |
+|---|---:|---|
+| **CRITICAL** | > 70 | Investigate promptly |
+| **WARN** | 40–70 | Plan an upgrade or document why it can wait |
+| **NOTICE** | < 40 | Low-priority signal; hidden by default |
 
 Direct dependencies are **bold**. Severity is never color-only — each row
 also carries a `[C]` / `[W]` / `[N]` tag, so it stays readable in
-grayscale, piped through a color stripper, or with `--color never`.
+grayscale, piped through a color stripper, or with `--color never`. Bold
+identifies ownership; it does not add points to the score.
 
----
+`notice` means “below the warning boundary”, not “broken”. Because even a
+small amount of publish age produces a non-zero score, a mature project may
+have many notices and few score-zero `healthy` crates. The default report
+hides those notices so the actionable items remain short.
 
-## Everyday use
+## Common workflows
 
 ```sh
 cargo depcheck                        # the default report
 cargo depcheck --threshold 30         # show lower-scoring issues too
+cargo depcheck --threshold 0          # enumerate the complete checked graph
 cargo depcheck --ignore libc          # hide a crate you've already triaged
-cargo depcheck --quiet                # just: 0 critical · 3 warnings · 342 healthy
+cargo depcheck --quiet                # summary counts only
 cargo depcheck --json > report.json   # machine-readable
 ```
 
-**In CI**, let the exit code do the work — no `jq`, no output parsing:
+`--threshold` controls what is printed, not what CI evaluates. A warning
+hidden by `--threshold 80` still makes `--fail-on warn` exit non-zero.
+Summary buckets are also threshold-independent: `notice` means a non-zero
+score below WARN, `healthy` means a checked score of zero, `unknown` means
+registry metadata was unavailable, and path/git dependencies are
+`not_applicable`.
+
+To find which dependency introduced a transitive crate, use Cargo's graph
+tools alongside the report:
+
+```sh
+cargo tree -i wasi
+```
+
+## CI and automation
+
+Let the exit code enforce policy; there is no need to parse terminal output:
 
 ```sh
 cargo depcheck --fail-on critical
@@ -90,17 +109,16 @@ cargo depcheck --fail-on critical
 | `0` | Clean, or nothing reached your `--fail-on` level |
 | `1` | Something at or above `--fail-on` was found |
 | `2` | Usage error (bad flag, bad config) |
-| `3` | Couldn't reach crates.io — report is incomplete (`--allow-incomplete` to allow) |
+| `3` | Registry or advisory data was incomplete (`--allow-incomplete` to allow) |
 
 First run needs network (the crates.io sparse index and the RustSec
 advisory DB). Both land in the caches `cargo` already uses, so later runs
 are fast — and `--offline` skips the network entirely, using whatever
-both caches already hold. Anything not yet cached is reported as
-unchecked rather than quietly assumed healthy.
+both caches already hold. Any registry dependency not yet cached is reported
+as unknown and marks the run incomplete rather than being quietly assumed
+healthy. Path and git dependencies are counted separately as not applicable.
 
----
-
-## GitHub Action
+### GitHub Action
 
 Downloads a prebuilt binary — no source build in your CI:
 
@@ -111,7 +129,8 @@ Downloads a prebuilt binary — no source build in your CI:
 ```
 
 It writes a summary table to the job summary, and exposes `critical`,
-`warnings`, `unknown`, and `healthy` as step outputs:
+`warnings`, `notices`, `unknown`, `not_applicable`, `ignored`, and `healthy`
+as step outputs:
 
 ```yaml
 - uses: debrajrout/cargo-depcheck@v1
@@ -141,9 +160,7 @@ Security tab either way. Every finding gets a sortable `security-severity`
 Other inputs: `version`, `manifest-path`, `threshold`, `ignore`,
 `allow-incomplete`, `summary`, `sarif-category`. See [action.yml](action.yml).
 
----
-
-## Configuration file
+## Project configuration
 
 Commit your policy so every developer and CI job uses the same settings:
 
@@ -166,8 +183,6 @@ expires = "2027-01-01"   # optional — omit for a permanent ignore
   something can't silently become permanent.
 - A workspace can use `[workspace.metadata.depcheck]` as a fallback for
   members that don't define their own.
-
----
 
 ## How scoring works
 
@@ -197,16 +212,16 @@ Three things worth knowing:
 - **Graph weight is absolute**, not relative to your project — so a
   threshold you tune once means the same thing everywhere.
 
-→ **[Full scoring reference](docs/SCORING.md)** for the exact point values
-and the reasoning behind them.
+See the **[full scoring reference](docs/SCORING.md)** for exact point values
+and design rationale.
 
----
+## Command reference
 
-## All flags
+Run `cargo depcheck --help` for the version installed on your machine.
 
 | Flag | What it does |
 |------|--------------|
-| `--threshold N` | Report crates scoring ≥ N (default: 40) |
+| `--threshold N` | Display crates scoring ≥ N (default: 40); does not weaken `--fail-on` |
 | `--ignore CRATE` | Skip a crate — repeat for multiple |
 | `--fail-on LEVEL` | Exit non-zero at `none` \| `warn` \| `critical` (default: `none`) |
 | `--format FORMAT` | `human` \| `json` \| `sarif` |
@@ -222,9 +237,11 @@ and the reasoning behind them.
 | `--include-build` | Also check build-script (`build.rs`) dependencies |
 | `--include-dev` | Also check dev-dependencies |
 
-`--json` output carries `schema_version` (currently `2`) plus
+`--json` output carries `schema_version` (currently `3`) plus
 `tool_version`, `generated_at`, `project`, and `advisory_db_commit`, so a
-stored report still makes sense when you read it back later.
+stored report still makes sense when you read it back later. Schema 3 adds
+exclusive `notices`, `not_applicable`, and `ignored` summary buckets and
+reserves `healthy` for checked dependencies whose score is zero.
 
 <details>
 <summary><b>Shell completions and man page</b></summary>
@@ -257,8 +274,6 @@ Needs Rust 1.91+.
 
 </details>
 
----
-
 ## Compared to other tools
 
 | | depcheck | audit | outdated | deny |
@@ -270,11 +285,9 @@ Needs Rust 1.91+.
 | JSON output | ✓ | ✓ | | ✓ |
 | License / policy enforcement | | | | ✓ |
 
-They're complementary, not competing. Use **audit** to block merges on
-known CVEs, **deny** for license policy, and **depcheck** to decide what to
-upgrade next.
-
----
+They are complementary: use **audit** to block known vulnerabilities,
+**deny** for license and policy enforcement, and **depcheck** to prioritize
+dependency maintenance.
 
 ## Contributing
 
@@ -293,8 +306,6 @@ for your work.
 your project, that's a bug report worth filing.
 
 [Code of Conduct](CODE_OF_CONDUCT.md) · [Security policy](SECURITY.md)
-
----
 
 ## License
 

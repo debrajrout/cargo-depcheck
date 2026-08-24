@@ -22,7 +22,7 @@ inputs:
     required: false
     default: ''
   threshold:
-    description: 'Only report dependencies scoring at or above this value (tool default: 40)'
+    description: 'Only display dependencies scoring at or above this value; does not weaken fail-on (tool default: 40)'
     required: false
     default: ''
   fail-on:
@@ -59,11 +59,20 @@ outputs:
   warnings:
     description: 'Number of WARN findings'
     value: ${{ steps.run.outputs.warnings }}
+  notices:
+    description: 'Number of NOTICE findings below the warning level'
+    value: ${{ steps.run.outputs.notices }}
   unknown:
-    description: 'Number of dependencies with no usable data (fetch failure or non-registry source)'
+    description: 'Number of registry dependencies with unavailable metadata and no higher-severity finding'
     value: ${{ steps.run.outputs.unknown }}
+  not_applicable:
+    description: 'Number of path or git dependencies without registry health metadata'
+    value: ${{ steps.run.outputs.not_applicable }}
+  ignored:
+    description: 'Number of dependencies suppressed by policy'
+    value: ${{ steps.run.outputs.ignored }}
   healthy:
-    description: 'Number of healthy dependencies'
+    description: 'Number of checked dependencies with score zero'
     value: ${{ steps.run.outputs.healthy }}
   report-path:
     description: 'Path to the full JSON report on disk'
@@ -223,13 +232,19 @@ runs:
         }
         critical=$(extract critical)
         warnings=$(extract warnings)
+        notices=$(extract notices)
         unknown_count=$(extract unknown)
+        not_applicable=$(extract not_applicable)
+        ignored=$(extract ignored)
         healthy=$(extract healthy)
 
         {
           echo "critical=$critical"
           echo "warnings=$warnings"
+          echo "notices=$notices"
           echo "unknown=$unknown_count"
+          echo "not_applicable=$not_applicable"
+          echo "ignored=$ignored"
           echo "healthy=$healthy"
           echo "report-path=$report_path"
         } >>"$GITHUB_OUTPUT"
@@ -238,9 +253,9 @@ runs:
           {
             echo "### cargo-depcheck"
             echo
-            echo "| critical | warnings | unknown | healthy |"
-            echo "|---|---|---|---|"
-            echo "| $critical | $warnings | $unknown_count | $healthy |"
+            echo "| critical | warnings | notices | unknown | not applicable | ignored | healthy |"
+            echo "|---|---|---|---|---|---|---|"
+            echo "| $critical | $warnings | $notices | $unknown_count | $not_applicable | $ignored | $healthy |"
           } >>"$GITHUB_STEP_SUMMARY"
         fi
 

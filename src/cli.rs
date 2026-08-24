@@ -35,6 +35,7 @@ pub struct Args {
 
     /// Only report dependencies at or above this score. Overrides
     /// `threshold` in `[package.metadata.depcheck]`; tool default is 40.
+    /// This controls output only and never weakens `--fail-on`.
     #[arg(long, value_name = "SCORE", env = "CARGO_DEPCHECK_THRESHOLD")]
     pub threshold: Option<f64>,
 
@@ -60,7 +61,7 @@ pub struct Args {
     #[arg(long)]
     pub no_fetch: bool,
 
-    /// Print only the summary counts, no detailed report
+    /// Print only summary counts (including an INCOMPLETE marker when needed)
     #[arg(short, long)]
     pub quiet: bool,
 
@@ -82,8 +83,9 @@ pub struct Args {
     pub color: ColorChoice,
 
     /// Use only the local sparse-index cache for crate metadata — no
-    /// network access. Crates not already cached are reported as unknown.
-    /// Also passes --offline through to the underlying `cargo metadata`.
+    /// network access. Registry crates not already cached are reported as
+    /// unknown; path/git dependencies are reported as not applicable. Also
+    /// passes --offline through to the underlying `cargo metadata`.
     #[arg(long)]
     pub offline: bool,
 

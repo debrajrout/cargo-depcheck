@@ -11,7 +11,12 @@ documentation = "https://github.com/debrajrout/cargo-depcheck#readme"
 readme = "README.md"
 keywords = ["cargo", "dependencies", "security", "audit", "maintenance"]
 categories = ["command-line-utilities", "development-tools::cargo-plugins"]
-exclude = [".github/", "tests/fixtures/", "tests/schemas/"]
+exclude = [
+    ".github/",
+    "tests/fixtures/",
+    "tests/schemas/",
+    "IMPLEMENTATION_PLAN.md",
+]
 
 [dependencies]
 # CLI argument parsing
@@ -55,13 +60,6 @@ terminal_size = "0.4"
 strip = true
 lto = true
 codegen-units = 1
-
-# Snapshot diffing (insta -> similar) is slow in debug; cargo-deny does the same.
-[profile.dev.package.insta]
-opt-level = 3
-
-[profile.dev.package.similar]
-opt-level = 3
 
 [dev-dependencies]
 assert_cmd = "2"

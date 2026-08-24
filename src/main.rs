@@ -208,25 +208,7 @@ async fn main() -> Result<()> {
     let index = registry::SparseRegistry::new(args.offline)?;
     let raw = index.fetch(unique_names).await;
 
-    let mut meta_map: HashMap<String, registry::Metadata> = HashMap::new();
-    let mut unchecked: Vec<String> = Vec::new();
-    let mut last_error: Option<String> = None;
-    for (name, result) in raw {
-        match result {
-            Ok(Some(meta)) => {
-                meta_map.insert(name, meta);
-            }
-            Ok(None) => {
-                // Successfully queried the index; this crate genuinely has
-                // no entry (e.g. a rename). Not a data-layer failure.
-            }
-            Err(err) => {
-                last_error = Some(err.to_string());
-                unchecked.push(name);
-            }
-        }
-    }
-    unchecked.sort_unstable();
+    let (meta_map, unchecked, last_error) = collect_registry_results(raw);
 
     if !unchecked.is_empty() {
         let sample: Vec<String> = unchecked.iter().take(3).cloned().collect();
@@ -246,10 +228,10 @@ async fn main() -> Result<()> {
     // a transient GitHub outage as if a critical advisory had been found is
     // indistinguishable from the real thing in CI. `--allow-incomplete`
     // applies here for the same reason it applies to the registry side.
-    let db = match advisory_task {
-        None => None,
+    let (db, advisory_degraded) = match advisory_task {
+        None => (None, false),
         Some(task) => match task.await.context("advisory fetch task panicked")? {
-            Ok(database) => Some(database),
+            Ok(database) => (Some(database), false),
             Err(err) => {
                 eprintln!("error: failed to load the RustSec advisory database: {err:#}");
                 if !args.allow_incomplete {
@@ -263,21 +245,21 @@ async fn main() -> Result<()> {
                         "⚠".yellow()
                     ),
                 );
-                None
+                (None, true)
             }
         },
     };
+    let degraded = !unchecked.is_empty() || advisory_degraded;
 
     // ── Phase 4: compute risk scores ─────────────────────────────────────────
     // Each node's advisories are looked up exactly once here — previously
     // `advisories::index()` did a full pass over every node just to report
     // a count, then this loop repeated the same per-node lookup immediately
-    // after. Built before the threshold filter so a crate we have zero
-    // signal for (no advisories, no crates.io metadata) is counted as
-    // unknown rather than silently vanishing from the "healthy" tally.
+    // after. Built before ignore and threshold filtering: duplicate
+    // detection needs the real graph, while ignored dependencies get their
+    // own summary bucket rather than silently inflating "healthy".
     let all_findings: Vec<report::Finding> = nodes
         .into_iter()
-        .filter(|node| !ignore.contains(&node.name))
         .map(|node| {
             let node_advisories = db
                 .as_ref()
@@ -309,34 +291,35 @@ async fn main() -> Result<()> {
         );
     }
 
-    let unknown = all_findings
+    let duplicates = report::duplicate_groups(&all_findings);
+    let ignored_count = all_findings
         .iter()
-        .filter(|f| f.advisories.is_empty() && !meta_map.contains_key(&f.node.name))
+        .filter(|f| ignore.contains(&f.node.name))
         .count();
 
-    let duplicates = report::duplicate_groups(&all_findings);
-
-    let mut findings: Vec<report::Finding> = all_findings
+    let mut analyzed_findings: Vec<report::Finding> = all_findings
         .into_iter()
-        .filter(|finding| finding.risk.total >= threshold)
+        .filter(|finding| !ignore.contains(&finding.node.name))
         .collect();
 
-    findings.sort_by(|a, b| {
+    // Summary and CI gating are properties of the analysis, not of what the
+    // user chose to display. In particular, `--threshold 80 --fail-on warn`
+    // must still fail when a score-40 warning exists.
+    let summary = report::summarize(&analyzed_findings, &meta_map, ignored_count, degraded);
+    let critical = summary.critical;
+    let warnings = summary.warnings;
+
+    analyzed_findings.sort_by(|a, b| {
         b.risk
             .total
             .partial_cmp(&a.risk.total)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let critical = findings
-        .iter()
-        .filter(|f| f.risk.level == score::RiskLevel::Critical)
-        .count();
-    let warnings = findings
-        .iter()
-        .filter(|f| f.risk.level == score::RiskLevel::Warn)
-        .count();
-    let summary = report::summarize(total_dependencies, critical, warnings, unknown);
+    let findings: Vec<report::Finding> = analyzed_findings
+        .into_iter()
+        .filter(|finding| score::rounded(finding.risk.total) >= threshold)
+        .collect();
 
     // ── Phase 5: render report ───────────────────────────────────────────────
     match format {
@@ -388,18 +371,45 @@ async fn main() -> Result<()> {
     // present · 2 usage error (handled by clap before we ever get here) ·
     // 3 the data layer was incomplete (a run that could not check some or
     // all registry crates is not the same thing as a clean report).
-    let code = exit_code(
-        !unchecked.is_empty(),
-        args.allow_incomplete,
-        fail_on,
-        critical,
-        warnings,
-    );
+    let code = exit_code(degraded, args.allow_incomplete, fail_on, critical, warnings);
     if code != 0 {
         std::process::exit(code);
     }
 
     Ok(())
+}
+
+fn collect_registry_results(
+    raw: registry::FetchResults,
+) -> (
+    HashMap<String, registry::Metadata>,
+    Vec<String>,
+    Option<String>,
+) {
+    let mut meta_map = HashMap::new();
+    let mut unchecked = Vec::new();
+    let mut last_error = None;
+    for (name, result) in raw {
+        match result {
+            Ok(Some(meta)) => {
+                meta_map.insert(name, meta);
+            }
+            Ok(None) => {
+                // `cargo metadata` identified this as a crates.io package, so
+                // a missing sparse-index entry is inconsistent data, not a
+                // clean result. Treat it exactly like any other unchecked
+                // crate so CI cannot receive a false all-clear.
+                last_error = Some(format!("{name} has no crates.io sparse-index entry"));
+                unchecked.push(name);
+            }
+            Err(err) => {
+                last_error = Some(err.to_string());
+                unchecked.push(name);
+            }
+        }
+    }
+    unchecked.sort_unstable();
+    (meta_map, unchecked, last_error)
 }
 
 fn exit_code(
@@ -555,5 +565,18 @@ mod tests {
         // Degraded data and a real finding can coexist; --allow-incomplete
         // only waives the "data layer was incomplete" failure, not findings.
         assert_eq!(exit_code(true, true, cli::FailOn::Critical, 1, 0), 1);
+    }
+
+    #[test]
+    fn missing_online_index_entry_is_unchecked_not_clean() {
+        let mut raw = registry::FetchResults::new();
+        raw.insert("ghost-crate".to_string(), Ok(None));
+
+        let (metadata, unchecked, last_error) = collect_registry_results(raw);
+        assert!(metadata.is_empty());
+        assert_eq!(unchecked, ["ghost-crate"]);
+        assert!(last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("no crates.io sparse-index entry")));
     }
 }

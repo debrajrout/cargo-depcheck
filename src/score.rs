@@ -22,6 +22,7 @@ pub enum RiskLevel {
 
 impl RiskLevel {
     pub fn from_score(score: f64) -> Self {
+        let score = rounded(score);
         if score > 70.0 {
             Self::Critical
         } else if score >= DEFAULT_THRESHOLD {
@@ -38,6 +39,14 @@ impl RiskLevel {
             Self::Low => "low",
         }
     }
+}
+
+/// Public score precision used by human and JSON reports, threshold
+/// filtering, and severity classification. Keeping one normalization point
+/// prevents contradictory output such as `40.0 [N]` or a displayed warning
+/// that a threshold of 40 silently hides.
+pub fn rounded(value: f64) -> f64 {
+    (value * 10.0).round() / 10.0
 }
 
 #[derive(Debug, Clone)]
@@ -83,7 +92,7 @@ impl RiskScore {
     /// Human-readable breakdown of how the total was derived.
     pub fn explain(&self) -> String {
         format!(
-            "sec {:.0} + lag {:.0} + maint {:.0} × {:.1}",
+            "(sec {:.0} + lag {:.0} + maint {:.0}) × {:.1}",
             self.security, self.version_lag, self.maintenance, self.graph_multiplier
         )
     }
@@ -338,6 +347,14 @@ mod tests {
     }
 
     #[test]
+    fn version_lag_00x_patch_bumps_are_breaking() {
+        let have = Version::new(0, 0, 1);
+        let latest = Version::new(0, 0, 3);
+        assert_eq!(lag_components(&have, &latest), (2, 0, 0));
+        assert_eq!(version_lag_points(&have, &latest), 25.0);
+    }
+
+    #[test]
     fn version_lag_patch_only_is_visible_but_small() {
         // Previously scored 0 — invisible. 0.10.45 -> 0.10.99 is 54 patches
         // behind, capped at MAX_PATCH_LAG so it never rivals a real
@@ -447,6 +464,8 @@ mod tests {
         assert_eq!(RiskLevel::from_score(70.0), RiskLevel::Warn);
         assert_eq!(RiskLevel::from_score(40.0), RiskLevel::Warn);
         assert_eq!(RiskLevel::from_score(39.9), RiskLevel::Low);
+        assert_eq!(RiskLevel::from_score(39.96), RiskLevel::Warn);
+        assert_eq!(RiskLevel::from_score(70.04), RiskLevel::Warn);
     }
 
     #[test]

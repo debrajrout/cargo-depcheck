@@ -1,0 +1,11 @@
+[package]
+name = "ph-root"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+ph-shared = { path = "../shared" }
+
+[dev-dependencies]
+ph-dev = { path = "../devonly" }

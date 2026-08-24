@@ -1,0 +1,4 @@
+[workspace]
+members = ["root"]
+exclude = ["shared", "devonly"]
+resolver = "2"

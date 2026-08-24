@@ -119,19 +119,13 @@ pub fn from_metadata(
 
     let workspace_ids: HashSet<&PackageId> = metadata.workspace_members.iter().collect();
 
-    // Build forward edges (what each package pulls in) and reverse edges
-    // (who pulls each package in). Normal edges are always followed; Build
-    // and Dev edges are followed only when explicitly requested, since
-    // neither ships with the built crate. `kind_map` records, for every
-    // package that ends up in the graph, the strongest reason it's there
-    // (see `NodeKind`'s ordering) — independent of which edge a BFS
-    // happens to discover it through first.
-    let mut children: HashMap<&PackageId, Vec<&PackageId>> = HashMap::new();
-    let mut parents: HashMap<&PackageId, Vec<&PackageId>> = HashMap::new();
-    let mut kind_map: HashMap<&PackageId, NodeKind> = HashMap::new();
+    // Forward edges, each tagged with the kind of edge it is. Normal edges
+    // are always followed; Build and Dev edges only when explicitly
+    // requested, since neither ships with the built crate.
+    let mut children: HashMap<&PackageId, Vec<(&PackageId, NodeKind)>> = HashMap::new();
 
     for node in &resolve.nodes {
-        let mut included: Vec<&PackageId> = Vec::new();
+        let mut included: Vec<(&PackageId, NodeKind)> = Vec::new();
 
         for dep in &node.deps {
             let dep_kind = if dep
@@ -159,19 +153,10 @@ pub fn from_metadata(
             };
 
             let Some(dep_kind) = dep_kind else { continue };
-
-            included.push(&dep.pkg);
-            let entry = kind_map.entry(&dep.pkg).or_insert(dep_kind);
-            if dep_kind > *entry {
-                *entry = dep_kind;
-            }
+            included.push((&dep.pkg, dep_kind));
         }
 
-        children.insert(&node.id, included.clone());
-
-        for dep_id in included {
-            parents.entry(dep_id).or_default().push(&node.id);
-        }
+        children.insert(&node.id, included);
     }
 
     // BFS from all workspace roots to assign the minimum depth to every reachable package.
@@ -185,7 +170,7 @@ pub fn from_metadata(
     }
 
     while let Some((id, depth)) = queue.pop_front() {
-        for dep_id in children.get(id).into_iter().flatten() {
+        for (dep_id, _) in children.get(id).into_iter().flatten() {
             let slot = depth_map.entry(dep_id).or_insert(usize::MAX);
             if depth + 1 < *slot {
                 *slot = depth + 1;
@@ -194,10 +179,64 @@ pub fn from_metadata(
         }
     }
 
-    // Direct deps are the immediate Normal-dep children of workspace members (depth == 1).
+    // Propagate "how does this crate reach us" down from the workspace
+    // roots. A package's kind is the *best* it achieves over any path, where
+    // a path is only as strong as its weakest edge: reaching a crate through
+    // a build-dependency makes it build-time no matter how many plain
+    // `[dependencies]` edges follow, because the whole subtree hangs off a
+    // build script.
+    //
+    // Classifying from the incoming edge alone (the previous approach) got
+    // this wrong for exactly the case `--include-build` exists to surface:
+    // a build-dep's own dependencies were labelled `Normal`, i.e. "ships in
+    // your binary", when they only ever run at build time.
+    let mut kind_map: HashMap<&PackageId, NodeKind> = HashMap::new();
+    let mut kind_queue: VecDeque<&PackageId> = VecDeque::new();
+    for id in &workspace_ids {
+        kind_map.insert(id, NodeKind::Normal);
+        kind_queue.push_back(id);
+    }
+    while let Some(id) = kind_queue.pop_front() {
+        let reaching = kind_map[id];
+        for (dep_id, edge_kind) in children.get(id).into_iter().flatten() {
+            // Weakest link along this path.
+            let candidate = reaching.min(*edge_kind);
+            let improved = match kind_map.get(dep_id) {
+                Some(existing) => candidate > *existing,
+                None => true,
+            };
+            if improved {
+                kind_map.insert(dep_id, candidate);
+                kind_queue.push_back(dep_id);
+            }
+        }
+    }
+
+    // Reverse edges, built only from packages the BFS above actually reached.
+    //
+    // Building these alongside `children` (before the BFS) also counted
+    // packages the kind filter excluded and `nodes.retain` later deletes: a
+    // dev-only crate is dropped from the report, but its own Normal edges
+    // still voted on other crates' dependent counts. That inflated both the
+    // "relied on by N crates" line and the graph multiplier derived from it
+    // — on this repo's own graph, for roughly half the nodes. A package
+    // that isn't in the report can't be one of the dependents it counts.
+    let mut parents: HashMap<&PackageId, Vec<&PackageId>> = HashMap::new();
+    for (source, deps) in &children {
+        let reachable = depth_map.get(source).is_some_and(|d| *d != usize::MAX);
+        if !reachable {
+            continue;
+        }
+        for (dep_id, _) in deps {
+            parents.entry(dep_id).or_default().push(source);
+        }
+    }
+
+    // Direct deps are the immediate children of workspace members (depth == 1).
     let direct_ids: HashSet<&PackageId> = workspace_ids
         .iter()
-        .flat_map(|id| children.get(id).into_iter().flatten().copied())
+        .flat_map(|id| children.get(id).into_iter().flatten())
+        .map(|(dep_id, _)| *dep_id)
         .collect();
 
     // Transitive reverse-dependency closure: for each package, every other
@@ -431,6 +470,106 @@ mod tests {
         assert_eq!(find(&nodes, "normal-dep").kind, NodeKind::Normal);
         assert_eq!(find(&nodes, "build-only-dep").kind, NodeKind::Build);
         assert_eq!(find(&nodes, "dev-only-dep").kind, NodeKind::Dev);
+    }
+
+    #[test]
+    fn build_kind_propagates_to_the_whole_subtree() {
+        // `bs-root --[build]--> bs-bd --[normal]--> bs-sub`
+        //
+        // `bs-sub` is reached by a plain `[dependencies]` edge, but the path
+        // to it crosses a build-dependency, so it only ever runs at build
+        // time — it does not ship in the binary. Classifying from the
+        // incoming edge alone reported it as `Normal`, which is exactly
+        // backwards for the supply-chain question `--include-build` exists
+        // to answer.
+        let metadata = load_fixture("build-subdep");
+        let nodes = from_metadata(
+            &metadata,
+            KindOptions {
+                include_build: true,
+                include_dev: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(find(&nodes, "bs-bd").kind, NodeKind::Build);
+        assert_eq!(
+            find(&nodes, "bs-sub").kind,
+            NodeKind::Build,
+            "a crate reached only through a build edge never ships, however \
+             many normal edges follow it"
+        );
+    }
+
+    #[test]
+    fn a_crate_reachable_both_ways_is_classified_normal() {
+        // The counterpart to the propagation test: `Normal` must still win
+        // when *any* path qualifies. In `dep-kinds`, `normal-dep` hangs off
+        // a plain dependency edge, so enabling build/dev traversal must not
+        // downgrade it.
+        let metadata = load_fixture("dep-kinds");
+        let nodes = from_metadata(
+            &metadata,
+            KindOptions {
+                include_build: true,
+                include_dev: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(find(&nodes, "normal-dep").kind, NodeKind::Normal);
+    }
+
+    #[test]
+    fn excluded_packages_do_not_inflate_dependent_counts() {
+        // `ph-dev` is a dev-only dependency of the root, so with default
+        // options it is correctly excluded from the output — but it also has
+        // its own Normal edge to `ph-shared`. That edge must not vote:
+        // `ph-shared` has exactly one dependent in the reported graph
+        // (`ph-root`), and a package absent from the report cannot be one of
+        // the dependents the report counts.
+        //
+        // Before this was fixed, reverse edges were built from every package
+        // in `resolve.nodes` rather than only the reachable ones, so
+        // `ph-shared` reported 2 — inflating both the displayed count and
+        // the graph multiplier derived from it.
+        let metadata = load_fixture("phantom-dep");
+        let nodes = from_metadata(&metadata, KindOptions::default()).unwrap();
+
+        assert!(
+            nodes.iter().all(|n| n.name != "ph-dev"),
+            "dev-only dep must be excluded by default: {nodes:?}"
+        );
+        let shared = find(&nodes, "ph-shared");
+        assert_eq!(
+            shared.dependent_count, 1,
+            "only ph-root is a real dependent; ph-dev is not in the graph"
+        );
+        assert_eq!(shared.transitive_dependent_count, 1);
+    }
+
+    #[test]
+    fn including_dev_lets_the_previously_excluded_dependent_count_again() {
+        // The mirror of the test above: once `--include-dev` puts `ph-dev`
+        // into the graph, its edge to `ph-shared` is legitimate and must be
+        // counted. This is what keeps the fix above from over-correcting
+        // into simply dropping real edges.
+        let metadata = load_fixture("phantom-dep");
+        let nodes = from_metadata(
+            &metadata,
+            KindOptions {
+                include_build: false,
+                include_dev: true,
+            },
+        )
+        .unwrap();
+
+        assert!(nodes.iter().any(|n| n.name == "ph-dev"));
+        let shared = find(&nodes, "ph-shared");
+        assert_eq!(
+            shared.dependent_count, 2,
+            "ph-root and ph-dev both depend on it once dev deps are included"
+        );
     }
 
     #[test]

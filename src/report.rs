@@ -22,6 +22,9 @@ const MAX_INNER_WIDTH: usize = 120;
 /// Space taken by the box's own `│ │` border characters.
 const BORDER_OVERHEAD: usize = 2;
 const NAME_FIELD_WIDTH: usize = 41;
+/// Columns a wrapped reason line's continuation is indented by, so a
+/// continuation reads as part of the line above rather than as a new reason.
+const CONTINUATION_INDENT: usize = 5;
 
 pub const JSON_SCHEMA_VERSION: u32 = 2;
 
@@ -453,6 +456,116 @@ fn boxed_line(content: &str, visible_width: usize, inner_width: usize) -> String
     format!("│{content}{}│", " ".repeat(pad))
 }
 
+/// Splits `text` into lines that each fit `width` display columns, breaking
+/// at spaces and indenting continuations by `CONTINUATION_INDENT`.
+///
+/// Reason lines used to go to `boxed_line` unwrapped, and its `saturating_sub`
+/// silently clamped the padding to zero — so any line wider than the box (a
+/// long version pair like `0.11.1+wasi-snapshot-preview1 →
+/// 0.14.7+wasi-0.2.4` reaches ~90 columns against a 77-column default) pushed
+/// the closing `│` past the border and visibly broke the frame. Wrapping
+/// rather than truncating because the tail of these lines is the actionable
+/// half: the version to upgrade *to*.
+///
+/// A single word longer than `width` (no space to break at) is hard-split
+/// rather than allowed to overflow — correctness of the frame wins over
+/// keeping such a token intact.
+fn wrap_to_width(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![String::new()];
+    }
+    if text.width() <= width {
+        return vec![text.to_string()];
+    }
+
+    let continuation = " ".repeat(CONTINUATION_INDENT.min(width.saturating_sub(1)));
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0;
+
+    for word in text.split(' ') {
+        // Budget for this line: the full box on the first line, minus the
+        // hanging indent on every continuation.
+        let indent = if lines.is_empty() {
+            0
+        } else {
+            continuation.width()
+        };
+        let budget = width.saturating_sub(indent);
+        let word_width = word.width();
+        let sep = if current.is_empty() { 0 } else { 1 };
+
+        if current_width + sep + word_width <= budget {
+            if sep == 1 {
+                current.push(' ');
+            }
+            current.push_str(word);
+            current_width += sep + word_width;
+            continue;
+        }
+
+        if !current.is_empty() {
+            lines.push(if lines.is_empty() {
+                current.clone()
+            } else {
+                format!("{continuation}{current}")
+            });
+        }
+
+        // The word alone may still exceed a whole line; hard-split it. Both
+        // `current` and `current_width` are unconditionally reassigned on the
+        // loop's only exit, so no reset is needed before it.
+        let mut rest = word;
+        loop {
+            let indent = if lines.is_empty() {
+                0
+            } else {
+                continuation.width()
+            };
+            let budget = width.saturating_sub(indent).max(1);
+            if rest.width() <= budget {
+                current = rest.to_string();
+                current_width = rest.width();
+                break;
+            }
+            let head = take_columns(rest, budget);
+            lines.push(if lines.is_empty() {
+                head.clone()
+            } else {
+                format!("{continuation}{head}")
+            });
+            rest = &rest[head.len()..];
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(if lines.is_empty() {
+            current
+        } else {
+            format!("{continuation}{current}")
+        });
+    }
+
+    lines
+}
+
+/// Longest prefix of `s` that fits `width` display columns, split on a
+/// character boundary so the returned slice length is always valid to index
+/// with.
+fn take_columns(s: &str, width: usize) -> String {
+    let mut out = String::new();
+    let mut w = 0;
+    for ch in s.chars() {
+        let cw = ch.width().unwrap_or(0);
+        if w + cw > width {
+            break;
+        }
+        out.push(ch);
+        w += cw;
+    }
+    out
+}
+
 fn write_summary(out: &mut String, summary: &ReportSummary) {
     if summary.unknown > 0 {
         writeln!(
@@ -567,8 +680,10 @@ fn write_finding(
         meta_map,
         now,
     ) {
-        let detail = format!("   {line}");
-        writeln!(out, "{}", boxed_line(&detail, detail.width(), inner_width)).unwrap();
+        for piece in wrap_to_width(&line, inner_width.saturating_sub(3)) {
+            let detail = format!("   {piece}");
+            writeln!(out, "{}", boxed_line(&detail, detail.width(), inner_width)).unwrap();
+        }
     }
 }
 
@@ -910,6 +1025,69 @@ mod tests {
     #[test]
     fn ellipsize_leaves_short_names_untouched() {
         assert_eq!(ellipsize("serde", NAME_FIELD_WIDTH), "serde");
+    }
+
+    #[test]
+    fn wrap_leaves_a_fitting_line_as_one_piece() {
+        let line = "last published 342 days ago";
+        assert_eq!(wrap_to_width(line, 74), vec![line.to_string()]);
+    }
+
+    #[test]
+    fn wrap_breaks_the_real_wasi_line_that_used_to_break_the_box() {
+        // The exact reason line that overflowed a default-width box before
+        // wrapping existed: ~87 columns against a 74-column budget.
+        let line = "3 breaking version(s) behind latest \
+                    (0.11.1+wasi-snapshot-preview1 → 0.14.7+wasi-0.2.4)";
+        let pieces = wrap_to_width(line, 74);
+        assert!(pieces.len() > 1, "expected a wrap, got {pieces:?}");
+        for piece in &pieces {
+            assert!(
+                piece.width() <= 74,
+                "piece exceeds the budget: {piece:?} ({} cols)",
+                piece.width()
+            );
+        }
+        // Wrapping, not truncating: the upgrade target must survive.
+        assert!(pieces.join("").contains("0.14.7+wasi-0.2.4"));
+    }
+
+    #[test]
+    fn wrap_hard_splits_a_single_overlong_word() {
+        // No space to break at — the frame's correctness still wins.
+        let line = "a".repeat(200);
+        let pieces = wrap_to_width(&line, 40);
+        assert!(pieces.len() > 1);
+        for piece in &pieces {
+            assert!(piece.width() <= 40, "{} cols", piece.width());
+        }
+        assert_eq!(
+            pieces.iter().map(|p| p.trim_start()).collect::<String>(),
+            line
+        );
+    }
+
+    #[test]
+    fn no_rendered_row_ever_exceeds_the_box_width() {
+        // The regression this whole wrap exists for: every emitted row must
+        // measure exactly `inner_width + 2` once ANSI is stripped, including
+        // reason lines long enough to have overflowed before.
+        let _guard = ColorOverrideGuard::new(false);
+
+        const INNER: usize = 77;
+        let (findings, meta_map, now, summary) = sample_report();
+        let output = render_to_string(&findings, &meta_map, now, &summary, false, 5.0, &[]);
+
+        for row in output.lines() {
+            if !row.starts_with('│') {
+                continue;
+            }
+            assert_eq!(
+                strip_ansi(row).chars().count(),
+                INNER + 2,
+                "row is not exactly the box width: {row:?}"
+            );
+        }
     }
 
     /// A small, fully synthetic report exercising CRITICAL, WARN, and NOTICE

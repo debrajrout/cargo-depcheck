@@ -134,7 +134,11 @@ async fn main() -> Result<()> {
         quiet,
         format!(
             "Found {}  ({} direct · {} transitive)\n",
-            format!("{} dependencies", total_dependencies).bold(),
+            format!(
+                "{total_dependencies} {}",
+                plural(total_dependencies, "dependency", "dependencies")
+            )
+            .bold(),
             direct.to_string().green(),
             transitive.to_string().dimmed(),
         ),
@@ -157,7 +161,12 @@ async fn main() -> Result<()> {
     let advisory_task = if args.no_advisories {
         None
     } else {
-        let load_fn = if args.no_fetch {
+        // `--offline` has to suppress the advisory git fetch too, not just
+        // the registry one. It previously keyed off `--no-fetch` alone, so
+        // `--offline` still went to the network — which meant that on a
+        // genuinely disconnected machine the documented "skips the network
+        // entirely" flag aborted the run instead of producing a report.
+        let load_fn = if args.no_fetch || args.offline {
             advisories::load_cached
         } else {
             advisories::load
@@ -182,9 +191,9 @@ async fn main() -> Result<()> {
             machine_readable,
             quiet,
             format!(
-                "  {} Fetching registry metadata for {} crates...",
+                "  {} Fetching registry metadata for {attempted} {}...",
                 "⠋".cyan(),
-                attempted
+                plural(attempted, "crate", "crates"),
             ),
         );
     }
@@ -231,9 +240,32 @@ async fn main() -> Result<()> {
     // Join the advisory fetch started before phase 2. Its error handling is
     // unchanged by running it concurrently: a failed fetch still aborts the
     // run here rather than silently degrading to "no advisories".
+    // A failed advisory fetch is an incomplete data layer, not a finding, so
+    // it exits 3 like the registry half of the same problem — not 1, which
+    // the contract reserves for "a finding at or above --fail-on". Reporting
+    // a transient GitHub outage as if a critical advisory had been found is
+    // indistinguishable from the real thing in CI. `--allow-incomplete`
+    // applies here for the same reason it applies to the registry side.
     let db = match advisory_task {
         None => None,
-        Some(task) => Some(task.await.context("advisory fetch task panicked")??),
+        Some(task) => match task.await.context("advisory fetch task panicked")? {
+            Ok(database) => Some(database),
+            Err(err) => {
+                eprintln!("error: failed to load the RustSec advisory database: {err:#}");
+                if !args.allow_incomplete {
+                    std::process::exit(3);
+                }
+                status_print(
+                    machine_readable,
+                    quiet,
+                    format!(
+                        "  {} continuing without advisories (--allow-incomplete)",
+                        "⚠".yellow()
+                    ),
+                );
+                None
+            }
+        },
     };
 
     // ── Phase 4: compute risk scores ─────────────────────────────────────────
@@ -438,6 +470,17 @@ fn resolve_color(choice: cli::ColorChoice) {
 
     if std::env::var_os("CLICOLOR").is_some_and(|v| v == "0") {
         colored::control::set_override(false);
+    }
+}
+
+/// Picks the singular or plural noun for `count`. Trivial, but the report
+/// already pluralises its own counts, and "Found 1 dependencies" next to
+/// "relied on by 1 crate" reads like a bug in the tool.
+pub(crate) fn plural(count: usize, one: &'static str, many: &'static str) -> &'static str {
+    if count == 1 {
+        one
+    } else {
+        many
     }
 }
 

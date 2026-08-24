@@ -205,7 +205,21 @@ fn fetch_cached(
         .cached_krate(krate_name, lock)
         .map_err(|err| anyhow::anyhow!("{err}"))
         .context("failed to read the local index cache")?;
-    krate.as_ref().map(to_metadata).transpose()
+
+    // A cache miss offline is *missing data*, not "this crate isn't
+    // published". Online, `Ok(None)` genuinely means the index returned 404;
+    // offline it only means we have never fetched this crate here. Returning
+    // `Ok(None)` for both made every uncached crate look successfully
+    // checked-and-clean: no degraded warning, exit 0, and a years-stale
+    // dependency scored as healthy because version-lag and maintenance both
+    // fall back to zero without metadata. An empty index cache would report
+    // an entire tree as perfect.
+    let Some(krate) = krate else {
+        anyhow::bail!(
+            "{name} is not in the local index cache — run without --offline once to populate it"
+        );
+    };
+    to_metadata(&krate).map(Some)
 }
 
 fn to_metadata(krate: &IndexKrate) -> Result<Metadata> {
@@ -261,6 +275,40 @@ mod tests {
     fn user_agent_matches_the_real_repository() {
         assert!(USER_AGENT.contains(env!("CARGO_PKG_REPOSITORY")));
         assert!(!USER_AGENT.contains("debarajrout"));
+    }
+
+    /// An offline lookup for a crate with no local cache entry must come
+    /// back as an *error*, not as `Ok(None)`.
+    ///
+    /// `Ok(None)` is how the online path reports a real 404, and `main.rs`
+    /// treats it as "checked, nothing to report". Reusing it for an offline
+    /// cache miss made every uncached crate look clean: no degraded warning,
+    /// exit 0, and — because `score::compute` falls back to zero for both
+    /// version lag and maintenance without metadata — a stale dependency
+    /// scored as healthy. Against a cold cache that turns an entire
+    /// dependency tree into a false all-clear.
+    ///
+    /// Uses the real `CARGO_HOME` (so cargo's package-cache lock behaves as
+    /// in production) with a name no cache will ever hold. Needs no network:
+    /// the offline path only reads local files.
+    #[tokio::test]
+    async fn offline_cache_miss_is_an_error_not_a_silent_success() {
+        let name = "cargo-depcheck-nonexistent-crate-for-offline-cache-test";
+        let index = SparseRegistry::new(true).unwrap();
+        let names: std::collections::BTreeSet<String> = [name.to_string()].into_iter().collect();
+
+        let (returned, outcome) = index
+            .fetch(names)
+            .await
+            .into_iter()
+            .next()
+            .expect("one result");
+
+        assert_eq!(returned, name);
+        assert!(
+            outcome.is_err(),
+            "an uncached crate must degrade the run, not report as checked-and-absent: {outcome:?}"
+        );
     }
 
     #[test]

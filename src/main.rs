@@ -140,7 +140,31 @@ async fn main() -> Result<()> {
         ),
     );
 
-    // ── Phase 2: fetch registry metadata ─────────────────────────────────────
+    // ── Phases 2 and 3, concurrently ─────────────────────────────────────────
+    // The registry fetch (HTTP, via the sparse index) and the RustSec
+    // advisory fetch (git, via gix) need nothing from each other and touch
+    // different subsystems and on-disk locks. Running them back-to-back
+    // meant paying for both serially, and this run is ~99% network — an
+    // A/B over 8 alternating runs each put the median at 1556ms sequential
+    // vs 975ms concurrent.
+    //
+    // The advisory task is spawned *here*, after phase 1, rather than at the
+    // top of main: `#[tokio::main]`'s runtime drop waits for already-started
+    // `spawn_blocking` work, so spawning before `graph::load()` would stall
+    // a fast failure (bad manifest, `--locked` mismatch) behind an in-flight
+    // git fetch. Starting it after phase 1 gives up only the `cargo
+    // metadata` overlap and keeps most of the win.
+    let advisory_task = if args.no_advisories {
+        None
+    } else {
+        let load_fn = if args.no_fetch {
+            advisories::load_cached
+        } else {
+            advisories::load
+        };
+        Some(tokio::task::spawn_blocking(load_fn))
+    };
+
     // Only registry-published crates have index metadata at all — a git or
     // path dependency has none by definition and must not be treated as a
     // failed fetch (see graph::DependencyNode::is_registry). The sparse
@@ -162,6 +186,13 @@ async fn main() -> Result<()> {
                 "⠋".cyan(),
                 attempted
             ),
+        );
+    }
+    if advisory_task.is_some() {
+        status_print(
+            machine_readable,
+            quiet,
+            format!("  {} Fetching RustSec advisory database...", "⠋".cyan()),
         );
     }
 
@@ -197,24 +228,12 @@ async fn main() -> Result<()> {
         );
     }
 
-    // ── Phase 3: fetch RustSec advisory database ─────────────────────────────
-    let db = if args.no_advisories {
-        None
-    } else {
-        status_print(
-            machine_readable,
-            quiet,
-            format!("  {} Fetching RustSec advisory database...", "⠋".cyan()),
-        );
-        let load_fn = if args.no_fetch {
-            advisories::load_cached
-        } else {
-            advisories::load
-        };
-        let database = tokio::task::spawn_blocking(load_fn)
-            .await
-            .context("advisory fetch task panicked")??;
-        Some(database)
+    // Join the advisory fetch started before phase 2. Its error handling is
+    // unchanged by running it concurrently: a failed fetch still aborts the
+    // run here rather than silently degrading to "no advisories".
+    let db = match advisory_task {
+        None => None,
+        Some(task) => Some(task.await.context("advisory fetch task panicked")??),
     };
 
     // ── Phase 4: compute risk scores ─────────────────────────────────────────

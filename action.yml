@@ -10,6 +10,13 @@ inputs:
     description: 'cargo-depcheck release tag to install (e.g. v0.2.0). Defaults to the latest release.'
     required: false
     default: 'latest'
+  token:
+    description: >-
+      Token used to look up the latest release and download the archive.
+      Defaults to the job token. Only needed to avoid the unauthenticated
+      GitHub API rate limit (60/hr per runner IP), which busy CI can hit.
+    required: false
+    default: ${{ github.token }}
   manifest-path:
     description: 'Path to Cargo.toml (defaults to the nearest one from the working directory)'
     required: false
@@ -69,12 +76,29 @@ runs:
       shell: bash
       env:
         CARGO_DEPCHECK_VERSION: ${{ inputs.version }}
+        CARGO_DEPCHECK_TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
 
+        # Authenticated when a token is available: the unauthenticated API
+        # allows 60 requests/hr per runner IP, and on a busy shared runner
+        # that 403 surfaced only as a bare `curl` exit 22 with no explanation.
+        auth=()
+        if [ -n "${CARGO_DEPCHECK_TOKEN:-}" ]; then
+          auth=(-H "Authorization: Bearer $CARGO_DEPCHECK_TOKEN")
+        fi
+
         version="$CARGO_DEPCHECK_VERSION"
         if [ "$version" = "latest" ]; then
-          version=$(curl -fsSL https://api.github.com/repos/debrajrout/cargo-depcheck/releases/latest | jq -r .tag_name)
+          if ! release=$(curl -fsSL "${auth[@]}" https://api.github.com/repos/debrajrout/cargo-depcheck/releases/latest); then
+            echo "::error::Could not resolve the latest cargo-depcheck release. Pin an explicit 'version:' or retry."
+            exit 1
+          fi
+          version=$(jq -r .tag_name <<<"$release")
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::The latest-release lookup returned no tag name."
+            exit 1
+          fi
         fi
 
         os="$(uname -s)"
@@ -137,9 +161,23 @@ runs:
         done
 
         sarif_path="$RUNNER_TEMP/cargo-depcheck.sarif"
-        cargo-depcheck "${args[@]}" >"$sarif_path" 2>"$RUNNER_TEMP/cargo-depcheck-sarif-stderr.log"
+        code=0
+        cargo-depcheck "${args[@]}" >"$sarif_path" 2>"$RUNNER_TEMP/cargo-depcheck-sarif-stderr.log" || code=$?
         cat "$RUNNER_TEMP/cargo-depcheck-sarif-stderr.log" >&2
-        echo "sarif-path=$sarif_path" >>"$GITHUB_OUTPUT"
+
+        # Publish the path only if a usable report actually landed. This step
+        # is continue-on-error, but the upload step below is not — so setting
+        # the output unconditionally meant a failed run (bad manifest-path,
+        # say) left a 0-byte file that upload-sarif rejected, failing the
+        # whole job even under `fail-on: none`.
+        #
+        # Exit 3 is deliberately accepted: a degraded run still writes valid
+        # SARIF before exiting, and those findings are worth uploading.
+        if { [ "$code" -eq 0 ] || [ "$code" -eq 3 ]; } && [ -s "$sarif_path" ]; then
+          echo "sarif-path=$sarif_path" >>"$GITHUB_OUTPUT"
+        else
+          echo "::warning::cargo-depcheck could not produce a SARIF report (exit $code); skipping the Security tab upload"
+        fi
 
     - name: Upload SARIF to the Security tab
       if: inputs.sarif == 'true' && steps.sarif.outputs.sarif-path != ''

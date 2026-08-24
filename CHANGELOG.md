@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-24
+
+### Added
+
+- `cargo depcheck upgrade --compatible` applies exact Cargo-approved updates
+  within each selected crate's current compatibility line. `--dry-run`
+  validates the plan without changing the lockfile; real runs verify with
+  `cargo check --workspace` and restore the original `Cargo.lock` on failure.
+  The command never edits `Cargo.toml`, and explains updates that require a
+  manifest or parent-dependency change.
+
 ### Changed
 
 - **JSON report schema 3** makes summary buckets mutually exclusive. It adds

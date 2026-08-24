@@ -96,6 +96,32 @@ tools alongside the report:
 cargo tree -i wasi
 ```
 
+## Apply safe lockfile upgrades
+
+After reviewing the report, ask Cargo to apply only upgrades that stay on
+each resolved crate's current compatibility line:
+
+```sh
+cargo depcheck upgrade --compatible --dry-run
+cargo depcheck upgrade --compatible
+```
+
+The dry run asks Cargo to validate every exact `name@current → target` update
+and does not write `Cargo.lock`. A real run:
+
+- considers non-ignored registry findings visible at the configured threshold;
+- allows compatible security and yanked-version fixes, regardless of severity;
+- changes `Cargo.lock` only — never `Cargo.toml`;
+- runs `cargo check --workspace`; and
+- restores the original lockfile if an update or verification fails.
+
+Cargo's compatibility rules are followed exactly: `1.x` stays on the same
+major, `0.y` stays on the same minor, and `0.0.z` does not move automatically.
+Breaking-only and manifest-blocked updates are skipped with guidance. Use
+`--no-verify` only when you intend to verify the workspace yourself.
+`--locked`, `--frozen`, `--offline`, JSON, and SARIF are intentionally
+rejected for this mutating workflow.
+
 ## CI and automation
 
 Let the exit code enforce policy; there is no need to parse terminal output:
@@ -236,6 +262,10 @@ Run `cargo depcheck --help` for the version installed on your machine.
 | `--allow-incomplete` | Exit 0 even if some crates couldn't be checked |
 | `--include-build` | Also check build-script (`build.rs`) dependencies |
 | `--include-dev` | Also check dev-dependencies |
+
+Run `cargo depcheck upgrade --help` for the lockfile-upgrade options. The
+upgrade command is intentionally local and human-focused; the GitHub Action
+continues to analyze without modifying a checkout.
 
 `--json` output carries `schema_version` (currently `3`) plus
 `tool_version`, `generated_at`, `project`, and `advisory_db_commit`, so a

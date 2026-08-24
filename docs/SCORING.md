@@ -15,7 +15,7 @@ score = (security + version_lag + maintenance) × graph_weight
 |--------|-----|--------|
 | Security | 50 | RustSec advisories, or a yanked version |
 | Version lag | 25 | Releases behind the latest stable |
-| Maintenance | 15 | Days since last crates.io publish (caps at 2 years) |
+| Maintenance | 15 | Days since the crate's latest crates.io publish, across all versions (caps at 2 years) |
 | **× Graph weight** | 1.0–2.0 | How many crates depend on this one |
 
 ---
@@ -105,6 +105,20 @@ crate in the same state could score up to 85% higher in a small project
 than a large one, purely because of an unrelated crate elsewhere in the
 tree — which made `--threshold` mean something different in every project.
 It's absolute now, so a threshold you tune once travels between projects.
+
+Direct dependencies are bold in the human report, but directness is not an
+extra scoring term. The ranking measures security, lag, maintenance, and
+graph impact; it does not automatically put a direct leaf above a more
+widely reused transitive crate.
+
+`--threshold` is a presentation filter over these scores. Summary counts and
+`--fail-on` evaluate the complete analyzed graph, so increasing the threshold
+cannot accidentally weaken a CI policy.
+
+The maintenance timestamp describes crate-wide publishing activity, not the
+publication date of the resolved version. This distinguishes an abandoned
+crate from an actively maintained crate even when the project is pinned to
+an older release; version lag separately captures that pin.
 
 ---
 

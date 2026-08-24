@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **JSON report schema 3** makes summary buckets mutually exclusive. It adds
+  `total`, `notices`, `not_applicable`, and `ignored`; `healthy` now means a
+  checked dependency whose score is exactly zero. The GitHub Action exposes
+  the same buckets as outputs.
+- Human summaries now distinguish NOTICE, unknown, non-registry, ignored,
+  and healthy dependencies. Scores show one decimal so a value below a
+  severity boundary cannot round up to a contradictory label.
+- Maintenance reasons now say “latest crate release published” because the
+  signal measures the most recent publish across every version of a crate,
+  not the age of the resolved version.
+
+### Fixed
+
+- **A high `--threshold` could bypass `--fail-on`.** Severity counts and exit
+  codes were calculated after display filtering, so
+  `--threshold 80 --fail-on warn` could exit 0 with a score-40 warning in the
+  graph. Threshold now controls output only; summaries and CI gating always
+  use the complete analysis.
+- Ignored dependencies were subtracted from findings but left in the total,
+  silently counting them as healthy. They now have an explicit `ignored`
+  bucket, and duplicate detection still sees the full graph.
+- An unexpected missing sparse-index entry for a package Cargo identified as
+  crates.io-backed was treated as a successful lookup. It now degrades the
+  report and follows the incomplete-data exit-code policy.
+- Path and git dependencies no longer appear as unexplained `unknown`
+  dependencies; they are `not_applicable` unless a known advisory produces a
+  finding. Quiet degraded reports carry an `INCOMPLETE` marker.
+- Fixed singular/plural report text such as “1 warnings” and “1 years”.
+- Published installs no longer warn about dev-profile overrides for test-only
+  crates that Cargo omits during `cargo install`.
+
+### Documentation
+
+- Reorganized the README around a one-minute path from installation to
+  interpreting and acting on a report. The output example is shorter,
+  NOTICE/healthy semantics are explained up front, and reference material is
+  separated from common workflows and CI guidance.
+
 ## [0.3.0] - 2026-08-24
 
 ### Changed

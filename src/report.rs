@@ -23,14 +23,14 @@ const MAX_INNER_WIDTH: usize = 120;
 const BORDER_OVERHEAD: usize = 2;
 const NAME_FIELD_WIDTH: usize = 41;
 /// Columns a finding's header spends on everything except the name field:
-/// a leading space, the 3-column score, a space, the 3-column severity
+/// a leading space, the 5-column score, a space, the 3-column severity
 /// marker, a space, and the 12-column bar.
-const HEADER_FIXED_WIDTH: usize = 1 + 3 + 1 + 3 + 1 + 12;
+const HEADER_FIXED_WIDTH: usize = 1 + 5 + 1 + 3 + 1 + 12;
 /// Columns a wrapped reason line's continuation is indented by, so a
 /// continuation reads as part of the line above rather than as a new reason.
 const CONTINUATION_INDENT: usize = 5;
 
-pub const JSON_SCHEMA_VERSION: u32 = 2;
+pub const JSON_SCHEMA_VERSION: u32 = 3;
 
 pub struct Finding {
     pub node: DependencyNode,
@@ -39,10 +39,15 @@ pub struct Finding {
 }
 
 pub struct ReportSummary {
+    pub total: usize,
     pub critical: usize,
     pub warnings: usize,
+    pub notices: usize,
     pub unknown: usize,
+    pub not_applicable: usize,
+    pub ignored: usize,
     pub healthy: usize,
+    pub degraded: bool,
 }
 
 #[derive(Serialize)]
@@ -92,14 +97,18 @@ pub struct JsonIgnored {
 
 #[derive(Serialize)]
 pub struct JsonSummary {
+    pub total: usize,
     pub critical: usize,
     pub warnings: usize,
+    pub notices: usize,
     pub unknown: usize,
+    pub not_applicable: usize,
+    pub ignored: usize,
     pub healthy: usize,
     pub threshold: f64,
-    /// True when crates.io metadata could not be fetched for one or more
-    /// registry dependencies. Findings are still reported, but version-lag
-    /// and maintenance scoring for affected crates is incomplete.
+    /// True when registry metadata or the advisory database was unavailable.
+    /// Findings are still reported, but at least one scoring signal is
+    /// incomplete.
     pub degraded: bool,
     /// Names of registry dependencies whose crates.io metadata fetch failed
     /// this run (capped to a small sample; see `unchecked_count` for the total).
@@ -145,7 +154,7 @@ pub fn degraded_warning(
 ) -> String {
     let noun = crate::plural(unchecked_count, "crate", "crates");
     let mut msg = format!(
-        "  {} {} of {attempted} {noun} could not be checked (network error) — results are incomplete",
+        "  {} {} of {attempted} {noun} could not be checked (registry metadata unavailable) — results are incomplete",
         "⚠".yellow().bold(),
         unchecked_count.to_string().yellow().bold(),
     );
@@ -186,13 +195,13 @@ pub fn duplicate_groups(all_findings: &[Finding]) -> Vec<JsonDuplicate> {
 
     let mut groups: Vec<JsonDuplicate> = by_name
         .into_iter()
-        .filter(|(_, versions)| versions.len() > 1)
-        .map(|(name, mut versions)| {
+        .filter_map(|(name, mut versions)| {
             versions.sort();
-            JsonDuplicate {
+            versions.dedup();
+            (versions.len() > 1).then(|| JsonDuplicate {
                 name: name.to_string(),
                 versions: versions.iter().map(Version::to_string).collect(),
-            }
+            })
         })
         .collect();
     groups.sort_by(|a, b| a.name.cmp(&b.name));
@@ -229,13 +238,50 @@ pub fn duplicates_line(duplicates: &[JsonDuplicate]) -> Option<String> {
     ))
 }
 
-pub fn summarize(total: usize, critical: usize, warnings: usize, unknown: usize) -> ReportSummary {
-    ReportSummary {
-        critical,
-        warnings,
-        unknown,
-        healthy: total.saturating_sub(critical + warnings + unknown),
+/// Builds mutually-exclusive summary buckets from the complete analyzed set.
+///
+/// Severity wins over data completeness: if a crate has a known advisory but
+/// its registry metadata is unavailable, it remains a finding rather than
+/// being hidden inside `unknown`; `degraded` still records that the run was
+/// incomplete. Path/git dependencies with a known advisory are handled the
+/// same way. This keeps every dependency in exactly one result bucket without
+/// discarding actionable information.
+pub fn summarize(
+    findings: &[Finding],
+    meta_map: &HashMap<String, Metadata>,
+    ignored: usize,
+    degraded: bool,
+) -> ReportSummary {
+    let mut summary = ReportSummary {
+        total: findings.len() + ignored,
+        critical: 0,
+        warnings: 0,
+        notices: 0,
+        unknown: 0,
+        not_applicable: 0,
+        ignored,
+        healthy: 0,
+        degraded,
+    };
+
+    for finding in findings {
+        match finding.risk.level {
+            RiskLevel::Critical => summary.critical += 1,
+            RiskLevel::Warn => summary.warnings += 1,
+            RiskLevel::Low
+                if finding.node.is_registry && !meta_map.contains_key(&finding.node.name) =>
+            {
+                summary.unknown += 1;
+            }
+            RiskLevel::Low if !finding.node.is_registry && finding.advisories.is_empty() => {
+                summary.not_applicable += 1;
+            }
+            RiskLevel::Low if finding.risk.total > 0.0 => summary.notices += 1,
+            RiskLevel::Low => summary.healthy += 1,
+        }
     }
+
+    summary
 }
 
 /// Bundles the pieces of `to_json`'s payload that aren't per-finding, so
@@ -265,12 +311,16 @@ pub fn to_json(
         project: extras.project,
         advisory_db_commit: extras.advisory_db_commit,
         summary: JsonSummary {
+            total: summary.total,
             critical: summary.critical,
             warnings: summary.warnings,
+            notices: summary.notices,
             unknown: summary.unknown,
+            not_applicable: summary.not_applicable,
+            ignored: summary.ignored,
             healthy: summary.healthy,
             threshold,
-            degraded: !extras.unchecked.is_empty(),
+            degraded: summary.degraded,
             unchecked_sample: extras.unchecked.iter().take(5).cloned().collect(),
             unchecked_count: extras.unchecked.len(),
         },
@@ -563,26 +613,40 @@ fn take_columns(s: &str, width: usize) -> String {
 }
 
 fn write_summary(out: &mut String, summary: &ReportSummary) {
+    let mut parts = vec![
+        format!(
+            "{} {}",
+            summary.critical.to_string().red().bold(),
+            crate::plural(summary.critical, "critical", "critical")
+        ),
+        format!(
+            "{} {}",
+            summary.warnings.to_string().yellow().bold(),
+            crate::plural(summary.warnings, "warning", "warnings")
+        ),
+        format!(
+            "{} {}",
+            summary.notices.to_string().cyan(),
+            crate::plural(summary.notices, "notice", "notices")
+        ),
+    ];
     if summary.unknown > 0 {
-        writeln!(
-            out,
-            "  {} critical  ·  {} warnings  ·  {} unknown  ·  {} healthy",
-            summary.critical.to_string().red().bold(),
-            summary.warnings.to_string().yellow().bold(),
-            summary.unknown.to_string().dimmed(),
-            summary.healthy.to_string().green(),
-        )
-        .unwrap();
-    } else {
-        writeln!(
-            out,
-            "  {} critical  ·  {} warnings  ·  {} healthy",
-            summary.critical.to_string().red().bold(),
-            summary.warnings.to_string().yellow().bold(),
-            summary.healthy.to_string().green(),
-        )
-        .unwrap();
+        parts.push(format!("{} unknown", summary.unknown.to_string().dimmed()));
     }
+    if summary.not_applicable > 0 {
+        parts.push(format!(
+            "{} not applicable",
+            summary.not_applicable.to_string().dimmed()
+        ));
+    }
+    if summary.ignored > 0 {
+        parts.push(format!("{} ignored", summary.ignored.to_string().dimmed()));
+    }
+    parts.push(format!("{} healthy", summary.healthy.to_string().green()));
+    if summary.degraded {
+        parts.push("INCOMPLETE".yellow().bold().to_string());
+    }
+    writeln!(out, "  {}", parts.join("  ·  ")).unwrap();
 }
 
 fn json_finding(
@@ -593,7 +657,7 @@ fn json_finding(
     JsonFinding {
         name: finding.node.name.clone(),
         version: finding.node.version.to_string(),
-        score: round1(finding.risk.total),
+        score: score::rounded(finding.risk.total),
         level: finding.risk.level.as_str(),
         is_direct: finding.node.is_direct,
         kind: finding.node.kind.as_str(),
@@ -699,7 +763,9 @@ fn build_header(finding: &Finding, level: RiskLevel, inner_width: usize) -> (Str
     let name_field = ellipsize(&name_ver, name_width);
     let padded_name = format!(" {}", pad_to_width(&name_field, name_width));
 
-    let score_text = format!("{:>3.0}", finding.risk.total);
+    // One decimal keeps display and classification honest around boundaries:
+    // a raw 39.6 must not render as "40 [N]".
+    let score_text = format!("{:>5.1}", finding.risk.total);
     let bar = score_bar(finding.risk.total, 12);
     // Plain-text severity tag, always present alongside the section box's
     // own CRITICAL/WARN/NOTICE header (never a substitute for it — a row
@@ -786,6 +852,10 @@ pub(crate) fn reason_lines(
         if risk.maintenance > 0.0 {
             lines.push(maintenance_line(days));
         }
+    } else if node.is_registry {
+        lines.push("registry metadata unavailable; version and publish health unchecked".into());
+    } else if advisories.is_empty() {
+        lines.push("non-registry source; version and publish health not applicable".into());
     }
 
     if node.transitive_dependent_count > 0 {
@@ -850,10 +920,16 @@ fn version_lag_line(have: &Version, latest: &Version) -> Option<String> {
 
 fn maintenance_line(days: i64) -> String {
     if days >= 365 {
-        let years = days as f64 / 365.0;
-        format!("last published {years:.0} years ago")
+        let years = days / 365;
+        format!(
+            "latest crate release published {years} {} ago",
+            crate::plural(years as usize, "year", "years")
+        )
     } else {
-        format!("last published {days} days ago")
+        format!(
+            "latest crate release published {days} {} ago",
+            crate::plural(days.max(0) as usize, "day", "days")
+        )
     }
 }
 
@@ -869,31 +945,74 @@ mod tests {
     }
 
     #[test]
-    fn summarize_counts() {
-        let summary = summarize(100, 2, 6, 0);
-        assert_eq!(summary.critical, 2);
-        assert_eq!(summary.warnings, 6);
-        assert_eq!(summary.unknown, 0);
-        assert_eq!(summary.healthy, 92);
-    }
+    fn summarize_uses_exclusive_schema_v3_buckets() {
+        let mut notice = test_finding("notice", false, RiskLevel::Low, 12.0);
+        let mut healthy = test_finding("healthy", false, RiskLevel::Low, 0.0);
+        let unknown = test_finding("unknown", false, RiskLevel::Low, 0.0);
+        let mut not_applicable = test_finding("path-dep", false, RiskLevel::Low, 0.0);
+        not_applicable.node.is_registry = false;
 
-    #[test]
-    fn summarize_never_folds_unknown_into_healthy() {
-        let summary = summarize(100, 2, 6, 5);
-        assert_eq!(summary.unknown, 5);
-        assert_eq!(summary.healthy, 87);
+        // Keep these mutable assignments explicit: registry metadata is what
+        // distinguishes checked low-risk crates from `unknown`.
+        notice.node.is_registry = true;
+        healthy.node.is_registry = true;
+
+        let findings = vec![
+            test_finding("critical", false, RiskLevel::Critical, 80.0),
+            test_finding("warning", false, RiskLevel::Warn, 40.0),
+            notice,
+            healthy,
+            unknown,
+            not_applicable,
+        ];
+        let now = Utc::now();
+        let mut meta_map = HashMap::new();
+        for name in ["notice", "healthy"] {
+            meta_map.insert(
+                name.to_string(),
+                Metadata {
+                    newest_version: Version::new(1, 0, 0),
+                    max_stable_version: Some(Version::new(1, 0, 0)),
+                    updated_at: now,
+                    yanked_versions: Vec::new(),
+                },
+            );
+        }
+
+        let summary = summarize(&findings, &meta_map, 2, true);
+        assert_eq!(summary.total, 8);
+        assert_eq!(summary.critical, 1);
+        assert_eq!(summary.warnings, 1);
+        assert_eq!(summary.notices, 1);
+        assert_eq!(summary.healthy, 1);
+        assert_eq!(summary.unknown, 1);
+        assert_eq!(summary.not_applicable, 1);
+        assert_eq!(summary.ignored, 2);
+        assert!(summary.degraded);
         assert_eq!(
-            summary.critical + summary.warnings + summary.unknown + summary.healthy,
-            100
+            summary.critical
+                + summary.warnings
+                + summary.notices
+                + summary.healthy
+                + summary.unknown
+                + summary.not_applicable
+                + summary.ignored,
+            summary.total
         );
     }
 
     #[test]
-    fn summarize_saturates_when_buckets_exceed_total() {
-        // Defensive: a total that undercounts (e.g. stale caller) must never
-        // underflow healthy into a huge usize via wraparound.
-        let summary = summarize(5, 3, 3, 3);
-        assert_eq!(summary.healthy, 0);
+    fn duplicate_groups_require_distinct_versions() {
+        let same_version = vec![
+            test_finding("same-name", false, RiskLevel::Low, 0.0),
+            test_finding("same-name", false, RiskLevel::Low, 0.0),
+        ];
+        assert!(duplicate_groups(&same_version).is_empty());
+
+        let mut other = test_finding("same-name", false, RiskLevel::Low, 0.0);
+        other.node.version = Version::new(2, 0, 0);
+        let distinct_versions = vec![test_finding("same-name", false, RiskLevel::Low, 0.0), other];
+        assert_eq!(duplicate_groups(&distinct_versions).len(), 1);
     }
 
     #[test]
@@ -912,6 +1031,22 @@ mod tests {
         let latest = Version::parse("1.0.0").unwrap();
         assert!(have < latest);
         assert!(version_lag_line(&have, &latest).is_none());
+    }
+
+    #[test]
+    fn maintenance_line_pluralizes_days_and_years() {
+        assert_eq!(
+            maintenance_line(1),
+            "latest crate release published 1 day ago"
+        );
+        assert_eq!(
+            maintenance_line(365),
+            "latest crate release published 1 year ago"
+        );
+        assert_eq!(
+            maintenance_line(730),
+            "latest crate release published 2 years ago"
+        );
     }
 
     /// Ensures `colored::control::set_override` is always undone, even if
@@ -1251,7 +1386,19 @@ mod tests {
             },
         ];
 
-        let summary = summarize(346, 1, 1, 0);
+        // The snapshot models a 346-dependency project while rendering only
+        // three threshold-passing examples.
+        let summary = ReportSummary {
+            total: 346,
+            critical: 1,
+            warnings: 1,
+            notices: 1,
+            unknown: 0,
+            not_applicable: 0,
+            ignored: 0,
+            healthy: 343,
+            degraded: false,
+        };
         (findings, meta_map, now, summary)
     }
 

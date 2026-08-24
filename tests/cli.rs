@@ -7,6 +7,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 const NO_DEPS_MANIFEST: &str = "tests/fixtures/no-deps/Cargo.toml";
+const PATH_CHAIN_MANIFEST: &str = "tests/fixtures/chain/Cargo.toml";
 
 fn depcheck() -> Command {
     Command::cargo_bin("cargo-depcheck").expect("binary should build")
@@ -133,6 +134,28 @@ fn invalid_flag_value_exits_two() {
         .code(2);
 }
 
+#[test]
+fn path_dependencies_are_not_applicable_not_unknown() {
+    let assert = depcheck()
+        .args([
+            "depcheck",
+            "--manifest-path",
+            PATH_CHAIN_MANIFEST,
+            "--no-advisories",
+            "--json",
+        ])
+        .assert()
+        .success();
+    let report: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON report");
+
+    assert_eq!(report["schema_version"], 3);
+    assert_eq!(report["summary"]["total"], 2);
+    assert_eq!(report["summary"]["not_applicable"], 2);
+    assert_eq!(report["summary"]["unknown"], 0);
+    assert_eq!(report["summary"]["healthy"], 0);
+}
+
 /// A fixture pinning one real crates.io dependency (`libc`), with a
 /// committed lockfile, so its resolved version never changes underfoot.
 /// Unlike every other test here, the tests below need the crate's source
@@ -204,10 +227,12 @@ fn degraded_registry_with_allow_incomplete_exits_zero() {
             ONE_REGISTRY_DEP_MANIFEST,
             "--no-fetch",
             "--allow-incomplete",
+            "--quiet",
         ])
         .timeout(std::time::Duration::from_secs(15))
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains("INCOMPLETE"));
 }
 
 const YANKED_DEP_MANIFEST: &str = "tests/fixtures/yanked-dep/Cargo.toml";
@@ -250,6 +275,26 @@ fn yanked_version_is_detected_and_scored() {
         libc["components"]["security"].as_f64().unwrap() >= 40.0,
         "a yanked version should score at least the High-severity tier: {libc}"
     );
+}
+
+#[test]
+fn high_display_threshold_does_not_bypass_fail_on() {
+    warm_up_advisory_db();
+    depcheck()
+        .args([
+            "depcheck",
+            "--manifest-path",
+            YANKED_DEP_MANIFEST,
+            "--no-fetch",
+            "--threshold",
+            "100",
+            "--fail-on",
+            "warn",
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("1 warning"))
+        .stdout(predicate::str::contains("No dependencies scored"));
 }
 
 #[test]

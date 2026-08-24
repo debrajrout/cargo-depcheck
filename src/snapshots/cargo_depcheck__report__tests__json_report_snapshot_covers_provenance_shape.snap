@@ -1,11 +1,11 @@
 ---
 source: src/report.rs
-assertion_line: 1057
+assertion_line: 1354
 expression: output
 ---
 {
   "schema_version": 2,
-  "tool_version": "0.2.0",
+  "tool_version": "0.3.0",
   "generated_at": "REDACTED",
   "project": {
     "name": "sample-project",

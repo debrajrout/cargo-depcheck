@@ -7,7 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **~35% faster.** The registry fetch and the RustSec advisory fetch need
+  nothing from each other and touch different subsystems, but ran
+  back-to-back. They now run concurrently. Measured over 6 alternating
+  A/B pairs on the same network: median 1770ms → 1144ms. Every pair
+  favoured the concurrent version. (The advisory task is spawned after the
+  graph loads, not at startup, so a fast failure like a bad manifest still
+  fails fast instead of waiting on an in-flight git fetch.)
+
 ### Fixed
+
+- **Dependent counts were inflated by packages not in the report**, which
+  also inflated the graph multiplier derived from them. Reverse edges were
+  built from every package in the resolved graph, including ones the kind
+  filter excluded and the report later drops — so a dev-only crate, absent
+  from the output, still voted on other crates' "relied on by N crates"
+  line. On this repo's own graph that affected roughly half the nodes.
+  **Scores for affected crates drop slightly**, since the multiplier they
+  feed is now computed from real dependents only.
+- **`--include-build` / `--include-dev` mislabelled whole subtrees as
+  `normal`.** A crate's kind came from the single edge pointing at it, so a
+  build-dependency's own dependencies were reported as shipping in your
+  binary when they only ever run at build time — precisely backwards for
+  the supply-chain question those flags exist to answer. Kind now
+  propagates along the path: a path is only as strong as its weakest edge,
+  and `normal` still wins whenever any qualifying path exists.
+- **Long reason lines broke the report's box border.** The header row was
+  ellipsized but reason lines were not, and the padding calculation
+  silently clamped to zero instead of overflowing visibly — so any line
+  wider than the box pushed the closing border out of alignment. Reason
+  lines now wrap with a hanging indent, which keeps the upgrade-target
+  version (the actionable half) rather than truncating it away.
+- **A typo in `[package.metadata.depcheck]` was silently ignored.** Writing
+  `fail-on` instead of `fail_on` left CI ungated while looking green.
+  Unknown keys are now a config error (exit 2), and the message names both
+  the offending key and the valid ones.
+
+### Documentation
+
+- **README rewritten for readability.** It had grown into a reference
+  manual: three dense paragraphs of scoring rationale before a reader
+  reached a usage example, and several claims that went stale the moment
+  the crate was published (`@v1` "isn't resolvable yet", release archives
+  "will include" completions, a note excusing the box-border overflow that
+  is now actually fixed). The deep scoring rationale moved to
+  [docs/SCORING.md](docs/SCORING.md) rather than being deleted; the README
+  keeps a short version and links out. Every command in it was executed to
+  confirm it works, and the sample output is a real capture.
 
 - **Three integration tests failed on any fresh machine or CI runner** —
   `degraded_registry_exits_three`, `degraded_registry_with_allow_incomplete_exits_zero`,

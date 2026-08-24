@@ -1,20 +1,17 @@
 # cargo-depcheck
 
 [![CI](https://github.com/debrajrout/cargo-depcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/debrajrout/cargo-depcheck/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/cargo-depcheck.svg)](https://crates.io/crates/cargo-depcheck)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![MSRV: 1.91](https://img.shields.io/badge/rustc-1.91%2B-orange.svg)](https://releases.rs/docs/1.91.0/)
 
 **Your dependency tree has 300 crates. You have time for three.**
 
-`cargo audit` finds CVEs. `cargo outdated` finds stale versions. Both dump lists — neither tells you *what to fix first*.
+`cargo audit` finds CVEs. `cargo outdated` finds stale versions. Both give
+you a list — neither tells you what to fix **first**.
 
-`cargo depcheck` reads your full resolved graph, checks RustSec + crates.io, and ranks every problem by **how much it actually matters**: advisories, version lag, maintenance age, and how many other crates lean on it.
-
-One command. One ranked report. Start at the top.
-
----
-
-## Try it
+`cargo depcheck` ranks every problem by how much it actually matters: how
+severe it is, *and* how much of your tree depends on the crate it's in.
 
 ```sh
 cargo install cargo-depcheck
@@ -22,133 +19,131 @@ cd your-rust-project
 cargo depcheck
 ```
 
-First run needs network (crates.io's sparse index + RustSec advisory DB). Crate metadata is cached in the same `~/.cargo` index cache your regular `cargo` commands already use, and the advisory DB is cached at `~/.cargo/advisory-db`. Once both are warm, `--offline` skips the network entirely.
-
-**From a local clone** (for building from a branch, or contributing):
-
-```sh
-git clone https://github.com/debrajrout/cargo-depcheck
-cd cargo-depcheck
-cargo install --path .
-# or: cargo run -- depcheck --manifest-path /path/to/project/Cargo.toml
-```
-
-**Needs:** Rust 1.91+, `cargo` on your PATH.
-
 ---
 
 ## What you get
 
-Real output from running `cargo depcheck` against this repo's own dependency tree:
+Real output, from running it on this repo:
 
 ```
 $ cargo depcheck
 
-Found 349 dependencies  (17 direct · 332 transitive)
+Found 345 dependencies  (16 direct · 329 transitive)
 
-  ✓ RustSec advisory database ready  (2 affected)
-  0 critical  ·  4 warnings  ·  345 healthy
+  ✓ RustSec advisory database ready  (0 affected)
+  0 critical  ·  3 warnings  ·  342 healthy
   ⚠ 9 crates resolve at multiple versions: bitflags (1.3.2, 2.13.0), cpufeatures (0.2.17, 0.3.0), getrandom (0.2.17, 0.4.3) (+ 6 more)
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  WARN                                                                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ wasi 0.11.1+wasi-snapshot-preview1        46 [W] ██████░░░░░░               │
-│   3 breaking version(s) behind latest (0.11.1+wasi-snapshot-preview1 → 0.14.7+wasi-0.2.4)│
-│   last published 340 days ago                                               │
+│   3 breaking version(s) behind latest (0.11.1+wasi-snapshot-preview1 →      │
+│        0.14.7+wasi-0.2.4)                                                   │
+│   last published 342 days ago                                               │
 │   relied on by 25 crates in your graph, directly or transitively            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ allocator-api2 0.2.21                     45 [W] █████░░░░░░░               │
 │   2 breaking version(s) behind latest (0.2.21 → 0.4.0)                      │
-│   last published 254 days ago                                               │
+│   last published 255 days ago                                               │
 │   relied on by 37 crates in your graph, directly or transitively            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ windows-sys 0.52.0                        45 [W] █████░░░░░░░               │
 │   9 breaking version(s) behind latest (0.52.0 → 0.61.2)                     │
-│   last published 320 days ago                                               │
+│   last published 321 days ago                                               │
 │   relied on by 15 crates in your graph, directly or transitively            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ crossbeam-epoch 0.9.18                    42 [W] █████░░░░░░░               │
-│   advisory: RUSTSEC-2026-0204                                               │
-│   2 patch version(s) behind latest (0.9.18 → 0.9.20)                        │
-│   last published 47 days ago                                                │
-│   relied on by 6 crates in your graph, directly or transitively             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-(`wasi`'s reason line runs past the box's right border — a real terminal-width limitation for very long version strings, not a rendering bug we've hidden here.)
+Every finding tells you **why** it ranked where it did.
 
-Each finding shows **why** it ranked where it did — not just a version number in a table.
-
-| Section | Score | Meaning |
-|---------|-------|---------|
-| **CRITICAL** | > 70 | Fix soon — security + graph weight |
+| Section | Score | What to do |
+|---------|-------|------------|
+| **CRITICAL** | > 70 | Fix soon |
 | **WARN** | 40–70 | Worth a look this sprint |
-| *(hidden)* | < 40 | Omitted by default — use `--threshold` to reveal |
+| *(hidden)* | < 40 | Use `--threshold` to see these |
 
-Direct dependencies appear **bold** in the report. Severity is never
-color-only: each row also carries a plain-text `[C]`/`[W]`/`[N]` tag
-(matching CRITICAL/WARN/NOTICE), so a row stays classifiable in grayscale,
-through a color-stripping pipe, or with `--color never`.
-
----
-
-## Flags worth knowing
-
-| Flag | What it does |
-|------|----------------|
-| `--threshold 30` | Show anything scoring ≥ 30 (default: 40) |
-| `--ignore foo` | Skip a crate — repeat for multiple |
-| `--quiet` | Summary line only |
-| `--json` | CI-friendly JSON on stdout (progress on stderr) — alias for `--format json` |
-| `--format <human\|json\|sarif>` | Output format. `sarif` targets GitHub code scanning and similar tools |
-| `--no-advisories` | Skip RustSec — version/maintenance only |
-| `--no-fetch` | Use cached advisory DB, no git pull |
-| `--manifest-path PATH` | Point at another project |
-| `--fail-on <none\|warn\|critical>` | Exit non-zero when a finding at/above this level is present (default: `none`) |
-| `--allow-incomplete` | Exit 0 even if crates.io metadata couldn't be fetched for some dependencies |
-| `--color <auto\|always\|never>` | Control colored output (respects `NO_COLOR` / `CLICOLOR_FORCE` in `auto`) |
-| `--offline` | Use only the local sparse-index cache for crate metadata — no network |
-| `--locked` | Require `Cargo.lock` to be up to date (passed through to `cargo metadata`) |
-| `--frozen` | Require `Cargo.lock` and network access to be untouched — `--offline` + `--locked` combined |
-| `--include-build` | Also report build-script (`build.rs`) dependencies — off by default |
-| `--include-dev` | Also report dev-dependencies (tests/examples/benchmarks) — off by default |
-
-```sh
-cargo depcheck --threshold 30              # see lower-scoring issues
-cargo depcheck --ignore libc               # suppress one crate you've already triaged
-cargo depcheck --json --threshold 70 > report.json
-cargo depcheck --quiet                     # 0 critical  ·  4 warnings  ·  341 healthy
-```
-
-Run `cargo depcheck --help` for the full list.
+Direct dependencies are **bold**. Severity is never color-only — each row
+also carries a `[C]` / `[W]` / `[N]` tag, so it stays readable in
+grayscale, piped through a color stripper, or with `--color never`.
 
 ---
 
-## Shell completions and man page
+## Everyday use
 
 ```sh
-cargo depcheck completions bash > /usr/local/etc/bash_completion.d/cargo-depcheck
-cargo depcheck completions zsh  > "${fpath[1]}/_cargo-depcheck"
-cargo depcheck completions fish > ~/.config/fish/completions/cargo-depcheck.fish
-
-cargo depcheck mangen > /usr/local/share/man/man1/cargo-depcheck.1   # then: man cargo-depcheck
+cargo depcheck                        # the default report
+cargo depcheck --threshold 30         # show lower-scoring issues too
+cargo depcheck --ignore libc          # hide a crate you've already triaged
+cargo depcheck --quiet                # just: 0 critical · 3 warnings · 342 healthy
+cargo depcheck --json > report.json   # machine-readable
 ```
 
-`elvish` and `powershell` are also supported. Once a release is tagged,
-its archives on [Releases](https://github.com/debrajrout/cargo-depcheck/releases)
-will include pre-generated copies of both, under `completions/` and
-`cargo-depcheck.1` — see [release.yml](.github/workflows/release.yml).
+**In CI**, let the exit code do the work — no `jq`, no output parsing:
+
+```sh
+cargo depcheck --fail-on critical
+```
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Clean, or nothing reached your `--fail-on` level |
+| `1` | Something at or above `--fail-on` was found |
+| `2` | Usage error (bad flag, bad config) |
+| `3` | Couldn't reach crates.io — report is incomplete (`--allow-incomplete` to allow) |
+
+First run needs network (the crates.io sparse index and the RustSec
+advisory DB). Both land in the caches `cargo` already uses, so later runs
+are fast — and `--offline` skips the network entirely.
+
+---
+
+## GitHub Action
+
+Downloads a prebuilt binary — no source build in your CI:
+
+```yaml
+- uses: debrajrout/cargo-depcheck@v1
+  with:
+    fail-on: critical    # none | warn | critical
+```
+
+It writes a summary table to the job summary, and exposes `critical`,
+`warnings`, `unknown`, and `healthy` as step outputs:
+
+```yaml
+- uses: debrajrout/cargo-depcheck@v1
+  id: depcheck
+  with:
+    fail-on: none    # don't fail here — decide from the outputs instead
+- run: echo "found ${{ steps.depcheck.outputs.critical }} critical issues"
+```
+
+**Send findings to the Security tab** with SARIF:
+
+```yaml
+permissions:
+  security-events: write
+
+steps:
+  - uses: debrajrout/cargo-depcheck@v1
+    with:
+      sarif: true
+      fail-on: none
+```
+
+The upload runs before `fail-on` can fail the job, so findings reach the
+Security tab either way. Every finding gets a sortable `security-severity`
+— including the ~65% of RustSec advisories that have no CVSS score.
+
+Other inputs: `version`, `manifest-path`, `threshold`, `ignore`,
+`allow-incomplete`, `summary`, `sarif-category`. See [action.yml](action.yml).
 
 ---
 
 ## Configuration file
 
-Commit a `[package.metadata.depcheck]` table to your `Cargo.toml` so every
-developer and CI job gets the same threshold, failure policy, and ignore
-list without repeating flags. A workspace can set
-`[workspace.metadata.depcheck]` instead as a fallback for member crates
-that don't define their own table.
+Commit your policy so every developer and CI job uses the same settings:
 
 ```toml
 [package.metadata.depcheck]
@@ -161,152 +156,108 @@ reason = "vendored, patched internally"
 expires = "2027-01-01"   # optional — omit for a permanent ignore
 ```
 
-CLI flags (and their `env` equivalents, `CARGO_DEPCHECK_THRESHOLD` /
-`CARGO_DEPCHECK_FAIL_ON`) always win over this file. `--ignore` is
-additive with the config file's `ignore` list rather than replacing it. An
-ignore entry's `reason` shows up in `--json` output; once `expires` is in
-the past, the ignore stops applying and the crate is reported again, with
-a warning pointing at the stale entry. A malformed table is a config
-error (exit code 2), not a panic.
+- CLI flags beat the config file. `CARGO_DEPCHECK_THRESHOLD` and
+  `CARGO_DEPCHECK_FAIL_ON` work too.
+- `--ignore` **adds to** the config's ignore list rather than replacing it.
+- Once `expires` passes, the ignore stops applying and the crate is
+  reported again, with a warning pointing at the stale entry — so muting
+  something can't silently become permanent.
+- A workspace can use `[workspace.metadata.depcheck]` as a fallback for
+  members that don't define their own.
 
 ---
 
 ## How scoring works
 
-Every crate gets 0–100 points from three signals, then multiplied by graph weight:
+Every crate scores 0–100:
+
+```text
+score = (security + version_lag + maintenance) × graph_weight
+```
 
 | Signal | Max | Source |
 |--------|-----|--------|
-| Security | 50 | RustSec advisories (CVE severity, unmaintained, unsound) or a yanked version — whichever is worse |
-| Version lag | 25 | Breaking / compatible / patch releases behind latest stable |
-| Maintenance | 15 | Days since last crates.io publish (cap: 2 years) |
-| **× Graph weight** | 1.0–2.0 | More things depend on it → higher urgency |
+| Security | 50 | RustSec advisories, or a yanked version |
+| Version lag | 25 | Releases behind the latest stable |
+| Maintenance | 15 | Days since last publish (caps at 2 years) |
+| **× Graph weight** | 1.0–2.0 | How many crates depend on this one |
 
-A stale leaf at the edge of your tree scores lower than the same stale crate holding up 30 others. That's the point.
+**That multiplier is the point.** A stale leaf crate nobody imports scores
+lower than the same staleness in a crate holding up 30 others.
 
-**Version lag follows Cargo's own compatibility rule, not raw major/minor
-arithmetic.** Below 1.0, the *minor* version is the breaking axis — `0.3.1`
-to `0.4.0` is exactly as incompatible as `1.0.0` to `2.0.0`, and is scored
-the same way. Three tiers, most severe first: breaking releases behind
-(12.5 pts each, capped at 25), then compatible releases behind (2.5 pts
-each, capped at 25), then patch releases behind (0.5 pts each, capped at
-5 — visible, since a security fix often ships as a patch, but never able
-to outweigh a real breaking-version gap).
+Three things worth knowing:
 
-**When a RustSec advisory has no CVSS score, severity comes from its
-category instead of a flat guess.** 65% of advisories in the database
-(789 of 1,206) have no CVSS score at all, so this is the common case, not
-an edge case. Categories are ranked by this project's own judgment of
-real-world impact (RustSec doesn't rank them itself): malicious code and
-arbitrary code execution score highest; privilege escalation and memory
-corruption next; crypto failures, injection, thread-safety bugs, and file
-disclosure in the middle; memory exposure and denial-of-service lowest. An
-advisory with several categories takes the worst one; one with none at all
-gets a conservative Medium-equivalent default.
+- **Version lag follows Cargo's compatibility rule.** Below 1.0, `0.3.1` →
+  `0.4.0` is a *breaking* gap, scored like `1.0.0` → `2.0.0` — not a
+  routine minor bump.
+- **Advisories without a CVSS score still get ranked**, by category rather
+  than a flat guess. That's 65% of the RustSec database.
+- **Graph weight is absolute**, not relative to your project — so a
+  threshold you tune once means the same thing everywhere.
 
-**Graph weight is absolute, not relative to your project.** It's a
-saturating function of how many crates depend on this one — directly or
-transitively, so a crate with few direct dependents that sit underneath
-something widely used still gets credit for its real blast radius:
-
-```text
-weight(n) = 1.0 + ln(1 + n) / (ln(1 + n) + 4)
-```
-
-| Transitive dependents | Weight |
-|---|---|
-| 0 | 1.00 |
-| 5 | 1.31 |
-| 20 | 1.43 |
-| 100 | 1.54 |
-| 1000 | 1.63 |
-
-The same crate in the same state scores identically no matter what else is
-in your dependency tree — earlier versions computed this relative to your
-project's single most-depended-on crate, which meant the same crate could
-score up to 85% higher in a smaller project purely because of an unrelated
-crate elsewhere in the tree. `--threshold` now means the same thing in
-every project.
+→ **[Full scoring reference](docs/SCORING.md)** for the exact point values
+and the reasoning behind them.
 
 ---
 
-## GitHub Actions
+## All flags
 
-No tagged release exists yet, so `@v1` below isn't resolvable today — this
-is the interface [action.yml](action.yml) implements and what a `v1` tag
-will point at once one is cut. Pin to a commit SHA in the meantime if you
-want to use it before then.
+| Flag | What it does |
+|------|--------------|
+| `--threshold N` | Report crates scoring ≥ N (default: 40) |
+| `--ignore CRATE` | Skip a crate — repeat for multiple |
+| `--fail-on LEVEL` | Exit non-zero at `none` \| `warn` \| `critical` (default: `none`) |
+| `--format FORMAT` | `human` \| `json` \| `sarif` |
+| `--json` | Alias for `--format json` |
+| `--quiet` | Summary line only |
+| `--manifest-path PATH` | Point at another project |
+| `--color WHEN` | `auto` \| `always` \| `never` (respects `NO_COLOR`) |
+| `--offline` | Local cache only, no network |
+| `--locked` / `--frozen` | Require an up-to-date `Cargo.lock` |
+| `--no-advisories` | Skip RustSec — version and maintenance only |
+| `--no-fetch` | Use the cached advisory DB, no git pull |
+| `--allow-incomplete` | Exit 0 even if some crates couldn't be checked |
+| `--include-build` | Also check build-script (`build.rs`) dependencies |
+| `--include-dev` | Also check dev-dependencies |
 
-The official action downloads a prebuilt binary — no `cargo install` source
-build in your CI:
+`--json` output carries `schema_version` (currently `2`) plus
+`tool_version`, `generated_at`, `project`, and `advisory_db_commit`, so a
+stored report still makes sense when you read it back later.
 
-```yaml
-- uses: debrajrout/cargo-depcheck@v1
-  with:
-    fail-on: critical   # none | warn | critical (default: critical)
+<details>
+<summary><b>Shell completions and man page</b></summary>
+
+```sh
+cargo depcheck completions bash > /usr/local/etc/bash_completion.d/cargo-depcheck
+cargo depcheck completions zsh  > "${fpath[1]}/_cargo-depcheck"
+cargo depcheck completions fish > ~/.config/fish/completions/cargo-depcheck.fish
+
+cargo depcheck mangen > /usr/local/share/man/man1/cargo-depcheck.1
 ```
 
-It writes a summary table to the job summary and exposes `critical`,
-`warnings`, `unknown`, and `healthy` as step outputs for use in later steps:
+`elvish` and `powershell` work too. Every [release archive][releases] also
+ships pre-generated copies of all five, alongside the man page.
 
-```yaml
-- uses: debrajrout/cargo-depcheck@v1
-  id: depcheck
-  with:
-    fail-on: none   # don't fail here — decide based on the output instead
-- run: echo "found ${{ steps.depcheck.outputs.critical }} critical issues"
+[releases]: https://github.com/debrajrout/cargo-depcheck/releases
+
+</details>
+
+<details>
+<summary><b>Building from source</b></summary>
+
+```sh
+git clone https://github.com/debrajrout/cargo-depcheck
+cd cargo-depcheck
+cargo install --path .
 ```
 
-Beyond `fail-on` and `sarif` (above), the action also takes `version`
-(pin a specific release), `manifest-path`, `threshold`, `ignore`
-(space-separated), `allow-incomplete`, and `summary` (set to `false` to
-skip the job-summary table) — see [action.yml](action.yml) for the full
-input list; not every CLI flag has an action input yet.
+Needs Rust 1.91+.
 
-**SARIF upload to the Security tab:**
-
-```yaml
-permissions:
-  security-events: write   # required for the SARIF upload step
-
-steps:
-  - uses: debrajrout/cargo-depcheck@v1
-    with:
-      sarif: true
-      fail-on: none   # let the Security tab show findings even on a clean job
-```
-
-The upload happens before `fail-on` can fail the job, so findings still
-reach the Security tab even when the job itself fails. Every finding gets
-a `security-severity` GitHub can sort by — including ones with no CVSS
-score, which is the majority of RustSec's database (see "How scoring
-works" above).
-
-## CI without the Action
-
-```yaml
-- run: cargo install cargo-depcheck
-- run: cargo depcheck --fail-on critical
-```
-
-No `jq`, no exit-code plumbing — `--fail-on` does it:
-
-| Exit code | Meaning |
-|-----------|---------|
-| `0` | Clean, or no finding reached `--fail-on`'s level |
-| `1` | A finding at or above `--fail-on`'s level is present |
-| `2` | Usage error (bad flag or argument) |
-| `3` | crates.io metadata couldn't be fetched for some dependencies — the report is incomplete (see `--allow-incomplete`) |
-
-`--fail-on` accepts `none` (default), `warn`, or `critical`. JSON includes
-`"schema_version": 2` so scripts can pin against it, plus `tool_version`,
-`generated_at`, `project` (name + manifest path), and `advisory_db_commit`
-— everything you need to make sense of a JSON report re-read later,
-without re-running the tool that produced it.
+</details>
 
 ---
 
-## vs the usual tools
+## Compared to other tools
 
 | | depcheck | audit | outdated | deny |
 |---|:---:|:---:|:---:|:---:|
@@ -315,27 +266,31 @@ without re-running the tool that produced it.
 | Maintenance age | ✓ | | | |
 | **Ranked by graph impact** | ✓ | | | |
 | JSON output | ✓ | ✓ | | ✓ |
-| Policy / license enforcement | | | | ✓ |
+| License / policy enforcement | | | | ✓ |
 
-Use **audit** to block merges on known CVEs. Use **depcheck** weekly to decide what to upgrade next.
+They're complementary, not competing. Use **audit** to block merges on
+known CVEs, **deny** for license policy, and **depcheck** to decide what to
+upgrade next.
 
 ---
 
 ## Contributing
 
-**Open source and open to you.** Whether you fix a typo, add a test, or redesign scoring — there is a place for your work.
+Whether you fix a typo, add a test, or redesign scoring — there's a place
+for your work.
 
 | I want to… | Start here |
 |------------|------------|
-| Report a bug | [Open a bug report](https://github.com/debrajrout/cargo-depcheck/issues/new?template=bug_report.yml) |
-| Suggest a feature | [Open a feature request](https://github.com/debrajrout/cargo-depcheck/issues/new?template=feature_request.yml) |
-| Write code | Read [CONTRIBUTING.md](CONTRIBUTING.md) — setup, roles, PR process |
-| Find easy tasks | Issues labeled [`good first issue`](https://github.com/debrajrout/cargo-depcheck/labels/good%20first%20issue) |
-| Ask a question | [GitHub Discussions](https://github.com/debrajrout/cargo-depcheck/discussions) |
+| Report a bug | [Bug report](https://github.com/debrajrout/cargo-depcheck/issues/new?template=bug_report.yml) |
+| Suggest a feature | [Feature request](https://github.com/debrajrout/cargo-depcheck/issues/new?template=feature_request.yml) |
+| Write code | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Find an easy task | [`good first issue`](https://github.com/debrajrout/cargo-depcheck/labels/good%20first%20issue) |
+| Ask a question | [Discussions](https://github.com/debrajrout/cargo-depcheck/discussions) |
 
-**Roles:** User → Reporter → Contributor → Triager → Maintainer. You pick where to start; no permission needed to open an issue or PR. Full details in [CONTRIBUTING.md](CONTRIBUTING.md).
+**Scoring feedback is especially welcome** — if a ranking feels wrong for
+your project, that's a bug report worth filing.
 
-**Community:** [Code of Conduct](CODE_OF_CONDUCT.md) · [Security policy](SECURITY.md)
+[Code of Conduct](CODE_OF_CONDUCT.md) · [Security policy](SECURITY.md)
 
 ---
 

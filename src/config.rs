@@ -12,7 +12,14 @@ use serde::Deserialize;
 
 use crate::cli::FailOn;
 
+/// `deny_unknown_fields` because a silently-ignored key here is dangerous
+/// in a way a silently-ignored key usually isn't: someone who writes
+/// `fail-on` instead of `fail_on` gets a green CI run and believes their
+/// build is gated on critical findings when nothing is gating it at all.
+/// This table already treats a malformed value as a hard exit-2 error, so
+/// accepting an unrecognised key would be the inconsistent choice.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawConfig {
     threshold: Option<f64>,
     fail_on: Option<String>,
@@ -21,6 +28,7 @@ struct RawConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawIgnoreEntry {
     #[serde(rename = "crate")]
     crate_name: String,
@@ -175,6 +183,27 @@ mod tests {
             json!({ "depcheck": { "ignore": [{ "crate": "openssl", "expires": "not-a-date" }] } });
         let err = load(&pkg, &json!({}), date("2026-01-01")).unwrap_err();
         assert!(err.to_string().contains("openssl"));
+    }
+
+    #[test]
+    fn a_typoed_key_is_rejected_rather_than_silently_ignored() {
+        // `fail-on` instead of `fail_on`. Silently dropping this is the
+        // worst possible outcome: CI goes green and the author believes the
+        // build is gated on critical findings when nothing is gating it.
+        let pkg = json!({ "depcheck": { "fail-on": "critical" } });
+        let err = load(&pkg, &json!({}), date("2026-01-01")).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("fail-on"),
+            "the error should name the offending key: {err:#}"
+        );
+    }
+
+    #[test]
+    fn a_typoed_ignore_entry_key_is_rejected_too() {
+        let pkg = json!({
+            "depcheck": { "ignore": [{ "crate": "openssl", "reasons": "typo" }] }
+        });
+        assert!(load(&pkg, &json!({}), date("2026-01-01")).is_err());
     }
 
     #[test]

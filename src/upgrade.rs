@@ -78,9 +78,31 @@ pub async fn run(args: &Args, upgrade_args: &UpgradeArgs) -> Result<()> {
     }
 
     let lockfile = analysis.workspace_root.join("Cargo.lock");
+
+    // A transaction that only ever existed as bytes in this process's memory
+    // protects against every *normal* failure below — `?` always runs
+    // `Drop` on the way out, in-process — but not against this process
+    // itself being killed outright (SIGKILL, OOM-kill, power loss) between
+    // the first `apply_update` and the restore. Persisting the backup to
+    // disk first means recovery is possible even then; checking for one
+    // left over from a previous run means an interrupted transaction is
+    // never silently mistaken for a stable Cargo.lock.
+    let backup = backup_path(&lockfile);
+    if backup.exists() {
+        bail!(
+            "found a leftover backup from an interrupted upgrade: {}\n\
+             Cargo.lock may not reflect its state before that run. Compare the two, \
+             then either restore it (`cp {} {}`) or remove the backup once you've \
+             confirmed Cargo.lock is correct.",
+            backup.display(),
+            backup.display(),
+            lockfile.display()
+        );
+    }
+
     let original =
         fs::read(&lockfile).with_context(|| format!("failed to back up {}", lockfile.display()))?;
-    let mut transaction = LockfileTransaction::new(lockfile.clone(), original.clone());
+    let mut transaction = LockfileTransaction::new(lockfile.clone(), original.clone())?;
 
     for candidate in &validated {
         apply_update(&runner, &manifest, candidate).with_context(|| {
@@ -290,29 +312,54 @@ fn concise_error(stderr: &str) -> String {
         .to_string()
 }
 
+/// Where `path`'s pre-upgrade bytes are persisted for the duration of a
+/// transaction — a real file on disk, not just process memory, so a hard
+/// kill mid-upgrade leaves something to recover from. Its presence at the
+/// *start* of a run is exactly the signal that the previous run never
+/// finished cleanly.
+fn backup_path(path: &Path) -> PathBuf {
+    path.with_extension("lock.cargo-depcheck.bak")
+}
+
 struct LockfileTransaction {
     path: PathBuf,
+    backup: PathBuf,
     original: Vec<u8>,
     active: bool,
 }
 
 impl LockfileTransaction {
-    fn new(path: PathBuf, original: Vec<u8>) -> Self {
-        Self {
+    fn new(path: PathBuf, original: Vec<u8>) -> Result<Self> {
+        let backup = backup_path(&path);
+        fs::write(&backup, &original)
+            .with_context(|| format!("failed to write backup {}", backup.display()))?;
+        Ok(Self {
             path,
+            backup,
             original,
             active: true,
-        }
+        })
     }
 
     fn restore(&mut self) -> Result<()> {
         restore_lockfile(&self.path, &self.original)?;
-        self.active = false;
+        self.finish();
         Ok(())
     }
 
     fn commit(&mut self) {
+        self.finish();
+    }
+
+    /// Common to both `commit` and `restore`: the backup's job ends the
+    /// moment either one runs, since `self.original` in memory (still valid
+    /// for the rest of this process) and the restored/updated file on disk
+    /// are now the only copies that matter. Best-effort — a leftover backup
+    /// after a *successful* run is confusing but not unsafe, unlike a
+    /// missing one during a real crash.
+    fn finish(&mut self) {
         self.active = false;
+        let _ = fs::remove_file(&self.backup);
     }
 }
 
@@ -320,6 +367,7 @@ impl Drop for LockfileTransaction {
     fn drop(&mut self) {
         if self.active {
             let _ = restore_lockfile(&self.path, &self.original);
+            let _ = fs::remove_file(&self.backup);
         }
     }
 }
@@ -514,10 +562,15 @@ version = "2.0.0"
         let path = temp_path("rollback");
         fs::write(&path, b"original").unwrap();
         {
-            let _transaction = LockfileTransaction::new(path.clone(), b"original".to_vec());
+            let _transaction =
+                LockfileTransaction::new(path.clone(), b"original".to_vec()).unwrap();
             fs::write(&path, b"changed").unwrap();
         }
         assert_eq!(fs::read(&path).unwrap(), b"original");
+        assert!(
+            !backup_path(&path).exists(),
+            "backup must not outlive a rolled-back transaction"
+        );
         fs::remove_file(path).unwrap();
     }
 
@@ -526,12 +579,52 @@ version = "2.0.0"
         let path = temp_path("commit");
         fs::write(&path, b"original").unwrap();
         {
-            let mut transaction = LockfileTransaction::new(path.clone(), b"original".to_vec());
+            let mut transaction =
+                LockfileTransaction::new(path.clone(), b"original".to_vec()).unwrap();
             fs::write(&path, b"changed").unwrap();
             transaction.commit();
         }
         assert_eq!(fs::read(&path).unwrap(), b"changed");
+        assert!(
+            !backup_path(&path).exists(),
+            "backup must not outlive a committed transaction"
+        );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn transaction_persists_a_real_on_disk_backup_while_active() {
+        // The whole point: if this process were killed right here, the
+        // backup below is what a human (or a future run) recovers from —
+        // `original` in a `Vec<u8>` inside a killed process is gone.
+        let path = temp_path("on-disk-backup");
+        fs::write(&path, b"original").unwrap();
+        let transaction = LockfileTransaction::new(path.clone(), b"original".to_vec()).unwrap();
+        assert_eq!(fs::read(backup_path(&path)).unwrap(), b"original");
+        drop(transaction);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_leftover_backup_is_treated_as_an_interrupted_upgrade() {
+        // Simulates what a hard kill leaves behind: a backup file with no
+        // corresponding in-memory transaction to clean it up. The real
+        // caller in `run()` checks for this before ever reading Cargo.lock
+        // into a fresh transaction — this test pins the on-disk half of
+        // that contract, that the file left behind is exactly the one
+        // `backup_path` will look for.
+        let path = temp_path("orphaned");
+        fs::write(&path, b"partially-updated").unwrap();
+        fs::write(backup_path(&path), b"pre-upgrade original").unwrap();
+
+        assert!(backup_path(&path).exists());
+        assert_eq!(
+            fs::read(backup_path(&path)).unwrap(),
+            b"pre-upgrade original"
+        );
+
+        fs::remove_file(&path).unwrap();
+        fs::remove_file(backup_path(&path)).unwrap();
     }
 
     #[test]

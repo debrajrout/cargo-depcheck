@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (pre-release review)
 
+- **`upgrade`'s rollback only existed in process memory.** Every normal
+  failure (a `cargo update` error, a failed `cargo check`) restored
+  `Cargo.lock` correctly, since `?` always runs `Drop` on the way out — but
+  a hard kill (SIGKILL, OOM-kill, power loss) between the first update and
+  the restore left nothing to recover from once the process was gone. The
+  pre-upgrade bytes are now written to a real backup file before any
+  mutation starts; a leftover backup at the start of a run is treated as
+  an interrupted upgrade and refused with exact recovery steps, rather
+  than silently trusting whatever Cargo.lock happens to contain. Verified
+  by actually `kill -9`-ing the process mid-upgrade and confirming both
+  the backup's integrity and the next run's refusal.
 - **A score that rounds to zero was counted as a notice, not healthy.**
   `report::summarize` compared the raw, unrounded score, while every other
   consumer — `RiskLevel::from_score`, the displayed score text, the

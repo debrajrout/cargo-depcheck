@@ -94,7 +94,9 @@ cargo depcheck --fail-on critical
 
 First run needs network (the crates.io sparse index and the RustSec
 advisory DB). Both land in the caches `cargo` already uses, so later runs
-are fast — and `--offline` skips the network entirely.
+are fast — and `--offline` skips the network entirely, using whatever
+both caches already hold. Anything not yet cached is reported as
+unchecked rather than quietly assumed healthy.
 
 ---
 
@@ -212,7 +214,7 @@ and the reasoning behind them.
 | `--quiet` | Summary line only |
 | `--manifest-path PATH` | Point at another project |
 | `--color WHEN` | `auto` \| `always` \| `never` (respects `NO_COLOR`) |
-| `--offline` | Local cache only, no network |
+| `--offline` | Local caches only, no network at all (implies the cached advisory DB) |
 | `--locked` / `--frozen` | Require an up-to-date `Cargo.lock` |
 | `--no-advisories` | Skip RustSec — version and maintenance only |
 | `--no-fetch` | Use the cached advisory DB, no git pull |

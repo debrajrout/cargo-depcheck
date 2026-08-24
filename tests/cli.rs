@@ -5,12 +5,32 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const NO_DEPS_MANIFEST: &str = "tests/fixtures/no-deps/Cargo.toml";
 const PATH_CHAIN_MANIFEST: &str = "tests/fixtures/chain/Cargo.toml";
+static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 fn depcheck() -> Command {
     Command::cargo_bin("cargo-depcheck").expect("binary should build")
+}
+
+fn copy_no_deps_fixture() -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "cargo-depcheck-cli-{}-{}",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(root.join("src")).unwrap();
+    for relative in ["Cargo.toml", "Cargo.lock", "src/main.rs"] {
+        fs::copy(
+            std::path::Path::new("tests/fixtures/no-deps").join(relative),
+            root.join(relative),
+        )
+        .unwrap();
+    }
+    root
 }
 
 #[test]
@@ -132,6 +152,82 @@ fn invalid_flag_value_exits_two() {
         .args(["depcheck", "--fail-on", "bogus"])
         .assert()
         .code(2);
+}
+
+#[test]
+fn upgrade_help_documents_the_safety_controls() {
+    depcheck()
+        .args(["depcheck", "upgrade", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--compatible"))
+        .stdout(predicate::str::contains("--dry-run"))
+        .stdout(predicate::str::contains("--no-verify"));
+}
+
+#[test]
+fn upgrade_requires_explicit_compatible_mode() {
+    depcheck()
+        .args(["depcheck", "upgrade"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--compatible"));
+}
+
+#[test]
+fn upgrade_rejects_lockfile_guards_before_analysis() {
+    for flag in ["--locked", "--frozen", "--offline"] {
+        depcheck()
+            .args([
+                "depcheck",
+                "upgrade",
+                "--compatible",
+                flag,
+                "--manifest-path",
+                NO_DEPS_MANIFEST,
+            ])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("cannot be used"));
+    }
+}
+
+#[test]
+fn upgrade_rejects_machine_readable_formats() {
+    for args in [
+        vec!["--json"],
+        vec!["--format", "sarif"],
+        vec!["--format", "json"],
+    ] {
+        depcheck()
+            .args(["depcheck", "upgrade", "--compatible"])
+            .args(args)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("cannot be used"));
+    }
+}
+
+#[test]
+fn upgrade_dry_run_leaves_lockfile_unchanged() {
+    let root = copy_no_deps_fixture();
+    let lockfile = root.join("Cargo.lock");
+    let before = fs::read(&lockfile).unwrap();
+    depcheck()
+        .args([
+            "depcheck",
+            "upgrade",
+            "--compatible",
+            "--dry-run",
+            "--no-advisories",
+            "--manifest-path",
+        ])
+        .arg(root.join("Cargo.toml"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No compatible lockfile upgrades"));
+    assert_eq!(fs::read(&lockfile).unwrap(), before);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -309,6 +405,10 @@ fn completions_emits_a_nonempty_script_for_every_supported_shell() {
             stdout.contains("cargo-depcheck"),
             "{shell} completion script should reference the binary name: {stdout}"
         );
+        assert!(
+            stdout.contains("upgrade"),
+            "{shell} completion script should include the upgrade command"
+        );
     }
 }
 
@@ -328,5 +428,6 @@ fn mangen_emits_roff_with_the_binary_name() {
         .assert()
         .success()
         .stdout(predicate::str::starts_with(".ie"))
-        .stdout(predicate::str::contains("cargo\\-depcheck"));
+        .stdout(predicate::str::contains("cargo\\-depcheck"))
+        .stdout(predicate::str::contains("upgrade"));
 }

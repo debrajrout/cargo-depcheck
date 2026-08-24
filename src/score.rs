@@ -503,6 +503,7 @@ mod tests {
         let meta = Metadata {
             newest_version: Version::new(2, 0, 0),
             max_stable_version: Some(Version::new(2, 0, 0)),
+            stable_versions: vec![Version::new(2, 0, 0)],
             updated_at: Utc::now(),
             yanked_versions: vec![Version::new(1, 0, 0)],
         };
@@ -519,6 +520,7 @@ mod tests {
         let meta = Metadata {
             newest_version: Version::new(2, 0, 0),
             max_stable_version: Some(Version::new(2, 0, 0)),
+            stable_versions: vec![Version::new(2, 0, 0)],
             updated_at: Utc::now(),
             yanked_versions: vec![Version::new(1, 0, 0)],
         };

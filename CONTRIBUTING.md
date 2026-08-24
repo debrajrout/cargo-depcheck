@@ -195,13 +195,16 @@ CI runs the same checks on **Linux, macOS, and Windows**.
 
 ```
 src/
-├── main.rs         Five-phase orchestration (graph → registry → advisories → score → report)
+├── main.rs         Command dispatch and report rendering
+├── analyze.rs      Shared graph → metadata → advisory → scoring pipeline
 ├── cli.rs          Clap arguments + cargo plugin wrapper
 ├── graph.rs        cargo metadata, BFS, DependencyNode (unit tests here, against tests/fixtures/)
-├── registry.rs     Sparse-index client (crates.io metadata, no rate limit; unit tests here)
+├── registry.rs     Sparse-index client and compatible-version selection
 ├── advisories.rs   RustSec database fetch and lookup
 ├── score.rs        RiskScore formula (unit tests here)
-└── report.rs       Terminal boxes + JSON output (unit + snapshot tests here)
+├── report.rs       Terminal boxes + JSON output (unit + snapshot tests here)
+├── sarif.rs        SARIF 2.1.0 rendering
+└── upgrade.rs      Transactional compatible Cargo.lock updates and rollback
 
 tests/
 ├── cli.rs          End-to-end CLI behavior via the real binary (assert_cmd)
@@ -212,7 +215,8 @@ tests/
 **Pipeline:**
 
 ```
-graph → registry → advisories → score → report
+graph → registry + advisories → score → report
+                                    ↘ compatible lockfile upgrade → verify/rollback
 ```
 
 Read [README.md](README.md) for user-facing behavior and scoring tables.
@@ -243,7 +247,11 @@ These match how the existing code is written:
 - No crates.io fetch concurrency cap — the sparse index (via `tame-index`)
   has no documented rate limit, unlike the old JSON API this project used
   to hit; every crate is requested at once
-- Per-crate fetch errors are **silently skipped** (git/path deps won't crash the run)
+- Registry fetch errors make the analysis incomplete; path/git dependencies
+  are explicitly classified as not applicable
+- Compatible upgrades are selected from stable, non-yanked sparse-index
+  versions, but Cargo remains the authority: every exact update is preflighted
+  before the lockfile transaction begins
 - `rustsec` **0.33+** required (CVSS 4.0 advisories in current advisory-db)
 
 ---

@@ -32,6 +32,7 @@ const CONTINUATION_INDENT: usize = 5;
 
 pub const JSON_SCHEMA_VERSION: u32 = 3;
 
+#[derive(Clone)]
 pub struct Finding {
     pub node: DependencyNode,
     pub risk: RiskScore,
@@ -973,6 +974,7 @@ mod tests {
                 Metadata {
                     newest_version: Version::new(1, 0, 0),
                     max_stable_version: Some(Version::new(1, 0, 0)),
+                    stable_versions: vec![Version::new(1, 0, 0)],
                     updated_at: now,
                     yanked_versions: Vec::new(),
                 },
@@ -1297,6 +1299,7 @@ mod tests {
             Metadata {
                 newest_version: Version::new(3, 0, 0),
                 max_stable_version: Some(Version::new(3, 0, 0)),
+                stable_versions: vec![Version::new(3, 0, 0)],
                 updated_at: now - chrono::Duration::days(730),
                 yanked_versions: Vec::new(),
             },
@@ -1306,6 +1309,7 @@ mod tests {
             Metadata {
                 newest_version: Version::new(1, 40, 0),
                 max_stable_version: Some(Version::new(1, 40, 0)),
+                stable_versions: vec![Version::new(1, 40, 0)],
                 updated_at: now - chrono::Duration::days(10),
                 yanked_versions: Vec::new(),
             },
@@ -1315,6 +1319,7 @@ mod tests {
             Metadata {
                 newest_version: Version::new(0, 2, 189),
                 max_stable_version: Some(Version::new(0, 2, 189)),
+                stable_versions: vec![Version::new(0, 2, 189)],
                 updated_at: now - chrono::Duration::days(20),
                 yanked_versions: Vec::new(),
             },

@@ -53,6 +53,10 @@ pub struct Metadata {
     pub newest_version: Version,
     /// Highest non-yanked, non-prerelease version — the upgrade target.
     pub max_stable_version: Option<Version>,
+    /// All non-yanked, non-prerelease releases, sorted ascending. Retained so
+    /// lockfile upgrades can select the newest release without crossing the
+    /// currently resolved version's Cargo compatibility boundary.
+    pub stable_versions: Vec<Version>,
     /// The most recent publish time across every version of the crate — the
     /// maintenance signal. Sourced per-version from the sparse index's
     /// `pubtime` field, unlike the old crates.io JSON API's crate-level
@@ -73,6 +77,28 @@ impl Metadata {
 
     pub fn is_yanked(&self, version: &Version) -> bool {
         self.yanked_versions.contains(version)
+    }
+
+    pub fn latest_compatible(&self, have: &Version) -> Option<&Version> {
+        self.stable_versions
+            .iter()
+            .rev()
+            .find(|candidate| cargo_compatible(have, candidate))
+    }
+}
+
+fn cargo_compatible(have: &Version, candidate: &Version) -> bool {
+    if candidate <= have {
+        return false;
+    }
+    if have.major > 0 {
+        candidate.major == have.major
+    } else if have.minor > 0 {
+        candidate.major == 0 && candidate.minor == have.minor
+    } else {
+        // Under Cargo's caret rules every 0.0.z patch is its own
+        // compatibility line, so no distinct version is eligible.
+        false
     }
 }
 
@@ -226,11 +252,18 @@ fn to_metadata(krate: &IndexKrate) -> Result<Metadata> {
     let newest_version = Version::parse(krate.highest_version().version.as_str())
         .context("invalid version in index")?;
 
-    let max_stable_version = krate
-        .highest_normal_version()
-        .map(|v| Version::parse(v.version.as_str()))
-        .transpose()
-        .context("invalid stable version in index")?;
+    let mut stable_versions: Vec<Version> = krate
+        .versions
+        .iter()
+        .filter(|v| !v.is_yanked())
+        .map(|v| Version::parse(v.version.as_str()).context("invalid stable version in index"))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|v| v.pre.is_empty())
+        .collect();
+    stable_versions.sort();
+    stable_versions.dedup();
+    let max_stable_version = stable_versions.last().cloned();
 
     // Most recent publish across every version, not just the highest-semver
     // one — a patch release on an old branch can be the most recent activity.
@@ -255,6 +288,7 @@ fn to_metadata(krate: &IndexKrate) -> Result<Metadata> {
     Ok(Metadata {
         newest_version,
         max_stable_version,
+        stable_versions,
         updated_at,
         yanked_versions,
     })
@@ -316,6 +350,7 @@ mod tests {
         let meta = Metadata {
             newest_version: Version::new(2, 0, 0),
             max_stable_version: Some(Version::new(1, 5, 0)),
+            stable_versions: vec![Version::new(1, 5, 0)],
             updated_at: Utc::now(),
             yanked_versions: Vec::new(),
         };
@@ -327,6 +362,7 @@ mod tests {
         let meta = Metadata {
             newest_version: Version::new(2, 0, 0),
             max_stable_version: None,
+            stable_versions: Vec::new(),
             updated_at: Utc::now(),
             yanked_versions: Vec::new(),
         };
@@ -338,11 +374,39 @@ mod tests {
         let meta = Metadata {
             newest_version: Version::new(1, 0, 0),
             max_stable_version: None,
+            stable_versions: Vec::new(),
             updated_at: Utc::now(),
             yanked_versions: vec![Version::new(0, 9, 0)],
         };
         assert!(meta.is_yanked(&Version::new(0, 9, 0)));
         assert!(!meta.is_yanked(&Version::new(1, 0, 0)));
+    }
+
+    #[test]
+    fn latest_compatible_obeys_cargo_caret_lines() {
+        let meta = Metadata {
+            newest_version: Version::new(2, 0, 0),
+            max_stable_version: Some(Version::new(2, 0, 0)),
+            stable_versions: vec![
+                Version::new(0, 2, 1),
+                Version::new(0, 2, 9),
+                Version::new(0, 3, 0),
+                Version::new(1, 0, 0),
+                Version::new(1, 9, 0),
+                Version::new(2, 0, 0),
+            ],
+            updated_at: Utc::now(),
+            yanked_versions: Vec::new(),
+        };
+        assert_eq!(
+            meta.latest_compatible(&Version::new(1, 0, 0)),
+            Some(&Version::new(1, 9, 0))
+        );
+        assert_eq!(
+            meta.latest_compatible(&Version::new(0, 2, 1)),
+            Some(&Version::new(0, 2, 9))
+        );
+        assert_eq!(meta.latest_compatible(&Version::new(0, 0, 1)), None);
     }
 
     #[test]

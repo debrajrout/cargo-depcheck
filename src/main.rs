@@ -1,12 +1,9 @@
-use std::collections::{HashMap, HashSet};
-
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::{CommandFactory, Parser};
-use colored::Colorize;
-use registry::IndexSource;
 
 mod advisories;
+mod analyze;
 mod cli;
 mod config;
 mod graph;
@@ -14,402 +11,107 @@ mod registry;
 mod report;
 mod sarif;
 mod score;
+mod upgrade;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli::Cargo {
-        cmd: cli::CargoCommand::Depcheck(args),
+        cmd: cli::CargoCommand::Depcheck(mut args),
     } = cli::Cargo::parse();
 
-    if let Some(utility) = args.utility {
-        run_utility_command(utility)?;
-        return Ok(());
+    if let Some(command) = args.utility.take() {
+        return match command {
+            cli::UtilityCommand::Upgrade {
+                compatible,
+                dry_run,
+                no_verify,
+            } => {
+                resolve_color(args.color);
+                let upgrade_args = cli::UpgradeArgs {
+                    compatible,
+                    dry_run,
+                    no_verify,
+                };
+                upgrade::run(&args, &upgrade_args).await
+            }
+            utility => run_utility_command(utility),
+        };
     }
 
     resolve_color(args.color);
-
     let format = args.format.unwrap_or(if args.json {
         cli::OutputFormat::Json
     } else {
         cli::OutputFormat::Human
     });
-    // JSON and SARIF are both machine-readable: progress goes to stderr so
-    // stdout stays clean for the payload, same convention as plain --json.
     let machine_readable = !matches!(format, cli::OutputFormat::Human);
-    let quiet = args.quiet;
     let now = Utc::now();
+    let analysis = analyze::run(&args, machine_readable, now).await?;
 
-    if args.no_advisories && args.no_fetch {
-        status_print(
-            machine_readable,
-            quiet,
-            "note: --no-fetch has no effect with --no-advisories",
-        );
-    }
-
-    status_print(
-        machine_readable,
-        quiet,
-        format!("cargo-depcheck v{}", env!("CARGO_PKG_VERSION")).bold(),
-    );
-    status_print(
-        machine_readable,
-        quiet,
-        format!(
-            "Analyzing {}...\n",
-            manifest_display(args.manifest_path.as_deref()).cyan()
-        ),
-    );
-
-    // ── Phase 1: parse the dependency graph ─────────────────────────────────
-    let load_options = graph::LoadOptions {
-        offline: args.offline,
-        locked: args.locked,
-        frozen: args.frozen,
-    };
-    let kind_options = graph::KindOptions {
-        include_build: args.include_build,
-        include_dev: args.include_dev,
-    };
-    let (nodes, metadata) = graph::load(args.manifest_path.as_deref(), load_options, kind_options)?;
-    let workspace_root = metadata.workspace_root.clone().into_std_path_buf();
-
-    // [package.metadata.depcheck], falling back to
-    // [workspace.metadata.depcheck] — see config.rs. A malformed table is a
-    // usage error (exit 2), not a panic or a generic failure.
-    let package_metadata = metadata
-        .root_package()
-        .map(|p| &p.metadata)
-        .unwrap_or(&serde_json::Value::Null);
-    let config = match config::load(
-        package_metadata,
-        &metadata.workspace_metadata,
-        now.date_naive(),
-    ) {
-        Ok(config) => config,
-        Err(err) => {
-            eprintln!("error: {err:#}");
-            std::process::exit(2);
-        }
-    };
-
-    let threshold = args
-        .threshold
-        .or(config.threshold)
-        .unwrap_or(score::DEFAULT_THRESHOLD);
-    let fail_on = args.fail_on.or(config.fail_on).unwrap_or(cli::FailOn::None);
-
-    // CLI --ignore and config-file ignores are additive (a union of crates
-    // to skip), not one overriding the other — ignoring is naturally a set
-    // operation, unlike threshold/fail_on which are single values.
-    let mut ignore: HashSet<String> = args.ignore.into_iter().collect();
-    let mut ignored_with_reason: Vec<(String, Option<String>)> =
-        ignore.iter().map(|name| (name.clone(), None)).collect();
-    for entry in &config.ignores {
-        if entry.is_expired {
-            status_print(
-                machine_readable,
-                quiet,
-                format!(
-                    "  {} ignore for {:?} expired on {} — no longer applied, showing it again",
-                    "⚠".yellow(),
-                    entry.crate_name,
-                    entry.expires.expect("is_expired implies expires is Some"),
-                ),
-            );
-            continue;
-        }
-        ignore.insert(entry.crate_name.clone());
-        ignored_with_reason.push((entry.crate_name.clone(), entry.reason.clone()));
-    }
-    ignored_with_reason.sort_by(|a, b| a.0.cmp(&b.0));
-    ignored_with_reason.dedup_by(|a, b| a.0 == b.0);
-
-    let direct = nodes.iter().filter(|n| n.is_direct).count();
-    let transitive = nodes.len() - direct;
-    let total_dependencies = nodes.len();
-
-    status_print(
-        machine_readable,
-        quiet,
-        format!(
-            "Found {}  ({} direct · {} transitive)\n",
-            format!(
-                "{total_dependencies} {}",
-                plural(total_dependencies, "dependency", "dependencies")
-            )
-            .bold(),
-            direct.to_string().green(),
-            transitive.to_string().dimmed(),
-        ),
-    );
-
-    // ── Phases 2 and 3, concurrently ─────────────────────────────────────────
-    // The registry fetch (HTTP, via the sparse index) and the RustSec
-    // advisory fetch (git, via gix) need nothing from each other and touch
-    // different subsystems and on-disk locks. Running them back-to-back
-    // meant paying for both serially, and this run is ~99% network — an
-    // A/B over 8 alternating runs each put the median at 1556ms sequential
-    // vs 975ms concurrent.
-    //
-    // The advisory task is spawned *here*, after phase 1, rather than at the
-    // top of main: `#[tokio::main]`'s runtime drop waits for already-started
-    // `spawn_blocking` work, so spawning before `graph::load()` would stall
-    // a fast failure (bad manifest, `--locked` mismatch) behind an in-flight
-    // git fetch. Starting it after phase 1 gives up only the `cargo
-    // metadata` overlap and keeps most of the win.
-    let advisory_task = if args.no_advisories {
-        None
-    } else {
-        // `--offline` has to suppress the advisory git fetch too, not just
-        // the registry one. It previously keyed off `--no-fetch` alone, so
-        // `--offline` still went to the network — which meant that on a
-        // genuinely disconnected machine the documented "skips the network
-        // entirely" flag aborted the run instead of producing a report.
-        let load_fn = if args.no_fetch || args.offline {
-            advisories::load_cached
-        } else {
-            advisories::load
-        };
-        Some(tokio::task::spawn_blocking(load_fn))
-    };
-
-    // Only registry-published crates have index metadata at all — a git or
-    // path dependency has none by definition and must not be treated as a
-    // failed fetch (see graph::DependencyNode::is_registry). The sparse
-    // index has no documented rate limit (unlike the old JSON API), so
-    // every crate is requested at once rather than throttled.
-    let unique_names: std::collections::BTreeSet<String> = nodes
-        .iter()
-        .filter(|n| n.is_registry)
-        .map(|n| n.name.clone())
-        .collect();
-    let attempted = unique_names.len();
-
-    if !unique_names.is_empty() {
-        status_print(
-            machine_readable,
-            quiet,
-            format!(
-                "  {} Fetching registry metadata for {attempted} {}...",
-                "⠋".cyan(),
-                plural(attempted, "crate", "crates"),
-            ),
-        );
-    }
-    if advisory_task.is_some() {
-        status_print(
-            machine_readable,
-            quiet,
-            format!("  {} Fetching RustSec advisory database...", "⠋".cyan()),
-        );
-    }
-
-    let index = registry::SparseRegistry::new(args.offline)?;
-    let raw = index.fetch(unique_names).await;
-
-    let (meta_map, unchecked, last_error) = collect_registry_results(raw);
-
-    if !unchecked.is_empty() {
-        let sample: Vec<String> = unchecked.iter().take(3).cloned().collect();
-        status_print(
-            machine_readable,
-            quiet,
-            report::degraded_warning(unchecked.len(), attempted, &sample, last_error.as_deref()),
-        );
-    }
-
-    // Join the advisory fetch started before phase 2. Its error handling is
-    // unchanged by running it concurrently: a failed fetch still aborts the
-    // run here rather than silently degrading to "no advisories".
-    // A failed advisory fetch is an incomplete data layer, not a finding, so
-    // it exits 3 like the registry half of the same problem — not 1, which
-    // the contract reserves for "a finding at or above --fail-on". Reporting
-    // a transient GitHub outage as if a critical advisory had been found is
-    // indistinguishable from the real thing in CI. `--allow-incomplete`
-    // applies here for the same reason it applies to the registry side.
-    let (db, advisory_degraded) = match advisory_task {
-        None => (None, false),
-        Some(task) => match task.await.context("advisory fetch task panicked")? {
-            Ok(database) => (Some(database), false),
-            Err(err) => {
-                eprintln!("error: failed to load the RustSec advisory database: {err:#}");
-                if !args.allow_incomplete {
-                    std::process::exit(3);
-                }
-                status_print(
-                    machine_readable,
-                    quiet,
-                    format!(
-                        "  {} continuing without advisories (--allow-incomplete)",
-                        "⚠".yellow()
-                    ),
-                );
-                (None, true)
-            }
-        },
-    };
-    let degraded = !unchecked.is_empty() || advisory_degraded;
-
-    // ── Phase 4: compute risk scores ─────────────────────────────────────────
-    // Each node's advisories are looked up exactly once here — previously
-    // `advisories::index()` did a full pass over every node just to report
-    // a count, then this loop repeated the same per-node lookup immediately
-    // after. Built before ignore and threshold filtering: duplicate
-    // detection needs the real graph, while ignored dependencies get their
-    // own summary bucket rather than silently inflating "healthy".
-    let all_findings: Vec<report::Finding> = nodes
-        .into_iter()
-        .map(|node| {
-            let node_advisories = db
-                .as_ref()
-                .map(|database| advisories::lookup(database, &node.name, &node.version))
-                .unwrap_or_default();
-            let risk = score::compute(&node, meta_map.get(&node.name), &node_advisories, now);
-            report::Finding {
-                node,
-                risk,
-                advisories: node_advisories,
-            }
-        })
-        .collect();
-
-    if db.is_some() {
-        let affected: HashSet<&str> = all_findings
-            .iter()
-            .filter(|f| !f.advisories.is_empty())
-            .map(|f| f.node.name.as_str())
-            .collect();
-        status_print(
-            machine_readable,
-            quiet,
-            format!(
-                "\r  {} RustSec advisory database ready  ({} affected)",
-                "✓".green(),
-                affected.len()
-            ),
-        );
-    }
-
-    let duplicates = report::duplicate_groups(&all_findings);
-    let ignored_count = all_findings
-        .iter()
-        .filter(|f| ignore.contains(&f.node.name))
-        .count();
-
-    let mut analyzed_findings: Vec<report::Finding> = all_findings
-        .into_iter()
-        .filter(|finding| !ignore.contains(&finding.node.name))
-        .collect();
-
-    // Summary and CI gating are properties of the analysis, not of what the
-    // user chose to display. In particular, `--threshold 80 --fail-on warn`
-    // must still fail when a score-40 warning exists.
-    let summary = report::summarize(&analyzed_findings, &meta_map, ignored_count, degraded);
-    let critical = summary.critical;
-    let warnings = summary.warnings;
-
-    analyzed_findings.sort_by(|a, b| {
-        b.risk
-            .total
-            .partial_cmp(&a.risk.total)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    let findings: Vec<report::Finding> = analyzed_findings
-        .into_iter()
-        .filter(|finding| score::rounded(finding.risk.total) >= threshold)
-        .collect();
-
-    // ── Phase 5: render report ───────────────────────────────────────────────
     match format {
         cli::OutputFormat::Json => {
             let project = report::JsonProject {
-                name: metadata.root_package().map(|p| p.name.to_string()),
-                manifest_path: metadata
+                name: analysis.metadata.root_package().map(|p| p.name.to_string()),
+                manifest_path: analysis
+                    .metadata
                     .root_package()
                     .map(|p| p.manifest_path.to_string())
-                    .unwrap_or_else(|| workspace_root.join("Cargo.toml").display().to_string()),
+                    .unwrap_or_else(|| {
+                        analysis
+                            .workspace_root
+                            .join("Cargo.toml")
+                            .display()
+                            .to_string()
+                    }),
             };
             let json_report = report::to_json(
-                &findings,
-                &meta_map,
+                &analysis.visible_findings,
+                &analysis.meta_map,
                 now,
-                &summary,
-                threshold,
+                &analysis.summary,
+                analysis.threshold,
                 report::JsonExtras {
-                    unchecked: &unchecked,
-                    duplicates,
-                    ignored: ignored_with_reason,
+                    unchecked: &analysis.unchecked,
+                    duplicates: analysis.duplicates,
+                    ignored: analysis.ignored_with_reason,
                     project,
-                    advisory_db_commit: db.as_ref().and_then(advisories::commit_hash),
+                    advisory_db_commit: analysis.db.as_ref().and_then(advisories::commit_hash),
                 },
             );
-            let output = report::render_json(&json_report)?;
-            println!("{output}");
+            println!("{}", report::render_json(&json_report)?);
         }
         cli::OutputFormat::Sarif => {
-            let lockfile_path = workspace_root.join("Cargo.lock");
-            let sarif_log = sarif::build(&findings, &meta_map, now, &lockfile_path);
-            let output = sarif::render(&sarif_log)?;
-            println!("{output}");
-        }
-        cli::OutputFormat::Human => {
-            report::render(
-                &findings,
-                &meta_map,
+            let lockfile_path = analysis.workspace_root.join("Cargo.lock");
+            let sarif_log = sarif::build(
+                &analysis.visible_findings,
+                &analysis.meta_map,
                 now,
-                &summary,
-                args.quiet,
-                threshold,
-                &duplicates,
+                &lockfile_path,
             );
+            println!("{}", sarif::render(&sarif_log)?);
         }
+        cli::OutputFormat::Human => report::render(
+            &analysis.visible_findings,
+            &analysis.meta_map,
+            now,
+            &analysis.summary,
+            args.quiet,
+            analysis.threshold,
+            &analysis.duplicates,
+        ),
     }
 
-    // Exit code contract: 0 clean · 1 a finding at/above --fail-on is
-    // present · 2 usage error (handled by clap before we ever get here) ·
-    // 3 the data layer was incomplete (a run that could not check some or
-    // all registry crates is not the same thing as a clean report).
-    let code = exit_code(degraded, args.allow_incomplete, fail_on, critical, warnings);
+    let code = exit_code(
+        analysis.degraded,
+        args.allow_incomplete,
+        analysis.fail_on,
+        analysis.summary.critical,
+        analysis.summary.warnings,
+    );
     if code != 0 {
         std::process::exit(code);
     }
-
     Ok(())
-}
-
-fn collect_registry_results(
-    raw: registry::FetchResults,
-) -> (
-    HashMap<String, registry::Metadata>,
-    Vec<String>,
-    Option<String>,
-) {
-    let mut meta_map = HashMap::new();
-    let mut unchecked = Vec::new();
-    let mut last_error = None;
-    for (name, result) in raw {
-        match result {
-            Ok(Some(meta)) => {
-                meta_map.insert(name, meta);
-            }
-            Ok(None) => {
-                // `cargo metadata` identified this as a crates.io package, so
-                // a missing sparse-index entry is inconsistent data, not a
-                // clean result. Treat it exactly like any other unchecked
-                // crate so CI cannot receive a false all-clear.
-                last_error = Some(format!("{name} has no crates.io sparse-index entry"));
-                unchecked.push(name);
-            }
-            Err(err) => {
-                last_error = Some(err.to_string());
-                unchecked.push(name);
-            }
-        }
-    }
-    unchecked.sort_unstable();
-    (meta_map, unchecked, last_error)
 }
 
 fn exit_code(
@@ -430,7 +132,7 @@ fn exit_code(
     i32::from(triggered)
 }
 
-fn status_print(machine_readable: bool, quiet: bool, message: impl std::fmt::Display) {
+pub(crate) fn status_print(machine_readable: bool, quiet: bool, message: impl std::fmt::Display) {
     if quiet {
         return;
     }
@@ -441,15 +143,6 @@ fn status_print(machine_readable: bool, quiet: bool, message: impl std::fmt::Dis
     }
 }
 
-/// Resolves `--color` against the standard env-var stack, then applies it as
-/// a global override for the `colored` crate. Precedence: an explicit
-/// `--color` always wins; otherwise `NO_COLOR` (present and non-empty)
-/// disables color; otherwise `CLICOLOR_FORCE` (present and non-empty) forces
-/// it on; otherwise an unset `TERM` (not just `TERM=dumb`) disables color —
-/// a case that's easy to miss and that hits CI containers; otherwise
-/// `CLICOLOR=0` disables it; anything left falls through to `colored`'s own
-/// terminal detection. See https://no-color.org/ and
-/// https://bixense.com/clicolors/.
 fn resolve_color(choice: cli::ColorChoice) {
     match choice {
         cli::ColorChoice::Always => {
@@ -467,25 +160,19 @@ fn resolve_color(choice: cli::ColorChoice) {
         colored::control::set_override(false);
         return;
     }
-
     if std::env::var_os("CLICOLOR_FORCE").is_some_and(|v| !v.is_empty()) {
         colored::control::set_override(true);
         return;
     }
-
     if std::env::var_os("TERM").is_none() {
         colored::control::set_override(false);
         return;
     }
-
     if std::env::var_os("CLICOLOR").is_some_and(|v| v == "0") {
         colored::control::set_override(false);
     }
 }
 
-/// Picks the singular or plural noun for `count`. Trivial, but the report
-/// already pluralises its own counts, and "Found 1 dependencies" next to
-/// "relied on by 1 crate" reads like a bug in the tool.
 pub(crate) fn plural(count: usize, one: &'static str, many: &'static str) -> &'static str {
     if count == 1 {
         one
@@ -494,20 +181,18 @@ pub(crate) fn plural(count: usize, one: &'static str, many: &'static str) -> &'s
     }
 }
 
-fn manifest_display(path: Option<&std::path::Path>) -> String {
+pub(crate) fn manifest_display(path: Option<&std::path::Path>) -> String {
     path.map(|p| p.display().to_string())
         .unwrap_or_else(|| "current project".to_string())
 }
 
-/// The invocable name completions and the man page are generated for. Not
-/// `cargo-depcheck depcheck` (the literal argv `cargo` sees when it shells
-/// out to this binary via subprocess) — that's cargo's own plumbing, and
-/// nobody types it. Plugin authors document and generate against the real
-/// entry point instead: the standalone binary name.
 const UTILITY_BIN_NAME: &str = "cargo-depcheck";
 
 fn run_utility_command(utility: cli::UtilityCommand) -> Result<()> {
     match utility {
+        cli::UtilityCommand::Upgrade { .. } => {
+            unreachable!("upgrade is handled asynchronously before utility dispatch")
+        }
         cli::UtilityCommand::Completions { shell } => {
             let mut cmd = cli::Args::command().name(UTILITY_BIN_NAME);
             clap_complete::generate(shell, &mut cmd, UTILITY_BIN_NAME, &mut std::io::stdout());
@@ -562,21 +247,6 @@ mod tests {
 
     #[test]
     fn allow_incomplete_does_not_suppress_a_real_finding_failure() {
-        // Degraded data and a real finding can coexist; --allow-incomplete
-        // only waives the "data layer was incomplete" failure, not findings.
         assert_eq!(exit_code(true, true, cli::FailOn::Critical, 1, 0), 1);
-    }
-
-    #[test]
-    fn missing_online_index_entry_is_unchecked_not_clean() {
-        let mut raw = registry::FetchResults::new();
-        raw.insert("ghost-crate".to_string(), Ok(None));
-
-        let (metadata, unchecked, last_error) = collect_registry_results(raw);
-        assert!(metadata.is_empty());
-        assert_eq!(unchecked, ["ghost-crate"]);
-        assert!(last_error
-            .as_deref()
-            .is_some_and(|message| message.contains("no crates.io sparse-index entry")));
     }
 }

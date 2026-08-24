@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use cargo_metadata::{DependencyKind, MetadataCommand, PackageId};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DependencyNode {
     pub name: String,
     pub version: semver::Version,

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.1] - 2026-08-24
 
+### Fixed (pre-release review)
+
+- **A score that rounds to zero was counted as a notice, not healthy.**
+  `report::summarize` compared the raw, unrounded score, while every other
+  consumer — `RiskLevel::from_score`, the displayed score text, the
+  `--threshold` filter, and the JSON `score` field — rounds first. A crate
+  published one day ago (`maintenance_points(1) ≈ 0.0205`, raw > 0 but
+  rounds to `0.0`) landed in `notices` while displaying the identical
+  `"0.0"` a genuinely healthy crate shows, contradicting this release's own
+  documented definition of `healthy`.
+- The JSON snapshot pinning `tool_version` wasn't regenerated for this
+  version bump, breaking `cargo test --locked` (and CI) on all three
+  platforms.
+
 ### Added
 
 - `cargo depcheck upgrade --compatible` applies exact Cargo-approved updates

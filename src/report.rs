@@ -277,7 +277,7 @@ pub fn summarize(
             RiskLevel::Low if !finding.node.is_registry && finding.advisories.is_empty() => {
                 summary.not_applicable += 1;
             }
-            RiskLevel::Low if finding.risk.total > 0.0 => summary.notices += 1,
+            RiskLevel::Low if score::rounded(finding.risk.total) > 0.0 => summary.notices += 1,
             RiskLevel::Low => summary.healthy += 1,
         }
     }
@@ -1001,6 +1001,49 @@ mod tests {
                 + summary.ignored,
             summary.total
         );
+    }
+
+    #[test]
+    fn a_score_that_rounds_to_zero_is_healthy_not_a_notice() {
+        // The CHANGELOG's own definition: "`healthy` now means a checked
+        // dependency whose score is exactly zero." Every other consumer of a
+        // risk score rounds first — RiskLevel::from_score, the displayed
+        // score text, the --threshold filter, and the JSON `score` field all
+        // go through `score::rounded`. This bucketing compared the raw value
+        // instead, so a crate published one day ago
+        // (maintenance_points(1) = 15/730 ≈ 0.0205, raw > 0.0 but rounds to
+        // 0.0) landed in `notices` while displaying the identical "0.0" a
+        // genuinely healthy crate shows — two rows reading the same score,
+        // filed under different, mutually-exclusive buckets.
+        let raw_total = 15.0 / 730.0;
+        assert_eq!(
+            score::rounded(raw_total),
+            0.0,
+            "test is only meaningful if this rounds to zero"
+        );
+
+        let mut almost_zero = test_finding("almost-zero", false, RiskLevel::Low, raw_total);
+        almost_zero.node.is_registry = true;
+
+        let now = Utc::now();
+        let mut meta_map = HashMap::new();
+        meta_map.insert(
+            "almost-zero".to_string(),
+            Metadata {
+                newest_version: Version::new(1, 0, 0),
+                max_stable_version: Some(Version::new(1, 0, 0)),
+                stable_versions: vec![Version::new(1, 0, 0)],
+                updated_at: now,
+                yanked_versions: Vec::new(),
+            },
+        );
+
+        let summary = summarize(&[almost_zero], &meta_map, 0, false);
+        assert_eq!(
+            summary.healthy, 1,
+            "a score that displays as 0.0 must count as healthy"
+        );
+        assert_eq!(summary.notices, 0);
     }
 
     #[test]

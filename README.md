@@ -16,6 +16,12 @@ this old?”. `cargo depcheck` answers the follow-up question:
 
 > Which dependency deserves attention first?
 
+<img src="https://raw.githubusercontent.com/debrajrout/cargo-depcheck/main/docs/assets/demo-report.svg" alt="cargo depcheck ranking the three highest-scoring dependencies in its own dependency graph" width="820">
+
+**[Documentation](https://debrajrout.github.io/cargo-depcheck/)** ·
+[How scoring works](https://debrajrout.github.io/cargo-depcheck/scoring.html) ·
+[Compared to cargo-audit, cargo-outdated, and cargo-deny](https://debrajrout.github.io/cargo-depcheck/vs-cargo-audit.html)
+
 ## Quick start
 
 ```sh
@@ -29,17 +35,10 @@ Later runs reuse Cargo's caches.
 
 ## Reading the report
 
-This is an abbreviated report from this repository:
+The report is a ranked list. Direct dependencies are **bold**, and every row
+carries the score, a severity tag, and the reasons behind it:
 
 ```text
-$ cargo depcheck
-
-Found 345 dependencies  (16 direct · 329 transitive)
-
-  ✓ RustSec advisory database ready  (0 affected)
-  0 critical  ·  3 warnings  ·  342 notices  ·  0 healthy
-  ⚠ 9 crates resolve at multiple versions: bitflags (1.3.2, 2.13.0), cpufeatures (0.2.17, 0.3.0), getrandom (0.2.17, 0.4.3) (+ 6 more)
-
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  WARN                                                                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -74,27 +73,79 @@ hides those notices so the actionable items remain short.
 ## Common workflows
 
 ```sh
-cargo depcheck                        # the default report
-cargo depcheck --threshold 30         # show lower-scoring issues too
-cargo depcheck --threshold 0          # enumerate the complete checked graph
-cargo depcheck --ignore libc          # hide a crate you've already triaged
-cargo depcheck --quiet                # summary counts only
-cargo depcheck --json > report.json   # machine-readable
+cargo depcheck                          # the default report
+cargo depcheck --top 5                  # only the five worst
+cargo depcheck --threshold 30           # show lower-scoring issues too
+cargo depcheck --threshold 0            # enumerate the complete checked graph
+cargo depcheck --ignore libc            # hide a crate you've already triaged
+cargo depcheck --quiet                  # summary counts only
+cargo depcheck --json > report.json     # machine-readable
+cargo depcheck --format markdown        # for a PR comment or job summary
+cargo depcheck explain wasi             # why does this crate score that?
 ```
 
-`--threshold` controls what is printed, not what CI evaluates. A warning
-hidden by `--threshold 80` still makes `--fail-on warn` exit non-zero.
+`--threshold` and `--top` control what is printed, not what CI evaluates. A
+warning hidden by `--threshold 80` still makes `--fail-on warn` exit non-zero.
 Summary buckets are also threshold-independent: `notice` means a non-zero
 score below WARN, `healthy` means a checked score of zero, `unknown` means
 registry metadata was unavailable, and path/git dependencies are
 `not_applicable`.
 
-To find which dependency introduced a transitive crate, use Cargo's graph
-tools alongside the report:
+## Why did this crate score that?
+
+`explain` shows the whole derivation — each signal against its cap with the
+evidence behind it, the graph multiplier and the count it came from, and the
+arithmetic that produces the total:
 
 ```sh
-cargo tree -i wasi
+cargo depcheck explain wasi
 ```
+
+<img src="https://raw.githubusercontent.com/debrajrout/cargo-depcheck/main/docs/assets/demo-explain.svg" alt="cargo depcheck explain showing wasi's score broken down by signal, the projected score after upgrading, and the dependency paths that pull it in" width="820">
+
+Three things it answers that the ranked report can't:
+
+- **Which of your own dependencies pulled this in.** A transitive finding is
+  only actionable once you know the direct dependency behind it, so the paths
+  are printed shortest-first, with `[build]` or `[dev]` marking the hop where
+  a path crosses a build-script or dev-only edge. (`cargo tree -i wasi` shows
+  the same relationships from Cargo's own view.)
+- **Whether upgrading would actually help.** The crate is re-scored at each
+  upgrade target — within its Cargo compatibility line, and at the latest
+  stable — against the same advisory database, rather than assuming an upgrade
+  only cancels version lag.
+- **Why a crate you expected isn't listed.** Being below your threshold,
+  suppressed by an ignore rule, or excluded as a dev/build dependency is
+  stated outright.
+
+Add `--format json` for the same breakdown as data, or `--max-paths N` to see
+more paths. `explain` is a diagnostic: it never fails a build, whatever it
+finds.
+
+## Adopt CI on a project that already has findings
+
+A project with an existing backlog fails `--fail-on warn` on day one, for
+reasons nobody in this PR introduced. A baseline separates the two:
+
+```sh
+cargo depcheck --write-baseline depcheck-baseline.json   # once, then commit it
+cargo depcheck --baseline depcheck-baseline.json --fail-on warn
+```
+
+The full report is still shown, with each finding marked `known` or `new`, and
+only the new ones can fail the build. A finding is new if the baseline has no
+entry for that crate **at that version**, if it carries an advisory the
+baseline didn't, or if it has crossed into a higher severity.
+
+Score drift alone never counts as new: maintenance points grow every day a
+crate isn't republished, so matching on exact scores would report every
+untouched dependency as new on the next run.
+
+The baseline file is an ordinary JSON report, so any report you've already
+archived works as one. Write it at the same `--threshold` you gate on — a
+mismatch is warned about, since a baseline can only contain what its own run
+reported. `--top` is refused with `--write-baseline`, because a truncated
+baseline would report everything it omitted as new next time.
 
 ## Apply safe lockfile upgrades
 
@@ -154,7 +205,7 @@ Downloads a prebuilt binary — no source build in your CI:
     fail-on: critical    # none | warn | critical
 ```
 
-It writes a summary table to the job summary, and exposes `critical`,
+It writes the report to the job summary, and exposes `critical`,
 `warnings`, `notices`, `unknown`, `not_applicable`, `ignored`, and `healthy`
 as step outputs:
 
@@ -183,8 +234,32 @@ The upload runs before `fail-on` can fail the job, so findings reach the
 Security tab either way. Every finding gets a sortable `security-severity`
 — including the ~65% of RustSec advisories that have no CVSS score.
 
-Other inputs: `version`, `manifest-path`, `threshold`, `ignore`,
-`allow-incomplete`, `summary`, `sarif-category`. See [action.yml](action.yml).
+**Comment the report on pull requests**, updating one comment instead of
+adding a new one on every push:
+
+```yaml
+permissions:
+  pull-requests: write
+
+steps:
+  - uses: debrajrout/cargo-depcheck@v1
+    with:
+      comment: true
+      top: 10
+      baseline: depcheck-baseline.json   # optional: mark what's new in this PR
+```
+
+Like the SARIF upload, the comment is posted before `fail-on` can fail the
+job — a failing check is exactly when the reviewer needs the report. If the
+job lacks `pull-requests: write` (the default for a pull request from a fork),
+the comment is skipped with a warning rather than failing the build. Set
+`comment-key` when one workflow runs the action more than once, so each run
+updates its own comment instead of overwriting a sibling's.
+
+Other inputs: `version`, `manifest-path`, `threshold`, `top`, `baseline`,
+`ignore`, `allow-incomplete`, `summary`, `sarif-category`, `comment-key`.
+Outputs also include `report-path`, `markdown-path`, and `comment-url`.
+See [action.yml](action.yml).
 
 ## Project configuration
 
@@ -248,9 +323,12 @@ Run `cargo depcheck --help` for the version installed on your machine.
 | Flag | What it does |
 |------|--------------|
 | `--threshold N` | Display crates scoring ≥ N (default: 40); does not weaken `--fail-on` |
+| `--top N` | Display only the N highest-scoring crates; does not weaken `--fail-on` |
 | `--ignore CRATE` | Skip a crate — repeat for multiple |
 | `--fail-on LEVEL` | Exit non-zero at `none` \| `warn` \| `critical` (default: `none`) |
-| `--format FORMAT` | `human` \| `json` \| `sarif` |
+| `--baseline PATH` | Compare against a stored report; `--fail-on` sees only new findings |
+| `--write-baseline PATH` | Write this run's report for a later `--baseline` to compare against |
+| `--format FORMAT` | `human` \| `json` \| `sarif` \| `markdown` |
 | `--json` | Alias for `--format json` |
 | `--quiet` | Summary line only |
 | `--manifest-path PATH` | Point at another project |
@@ -263,15 +341,19 @@ Run `cargo depcheck --help` for the version installed on your machine.
 | `--include-build` | Also check build-script (`build.rs`) dependencies |
 | `--include-dev` | Also check dev-dependencies |
 
-Run `cargo depcheck upgrade --help` for the lockfile-upgrade options. The
-upgrade command is intentionally local and human-focused; the GitHub Action
-continues to analyze without modifying a checkout.
+Run `cargo depcheck explain --help` and `cargo depcheck upgrade --help` for
+the per-command options. The upgrade command is intentionally local and
+human-focused; the GitHub Action continues to analyze without modifying a
+checkout.
 
-`--json` output carries `schema_version` (currently `3`) plus
+`--json` output carries `schema_version` (currently `4`) plus
 `tool_version`, `generated_at`, `project`, and `advisory_db_commit`, so a
-stored report still makes sense when you read it back later. Schema 3 adds
-exclusive `notices`, `not_applicable`, and `ignored` summary buckets and
-reserves `healthy` for checked dependencies whose score is zero.
+stored report still makes sense when you read it back later. Schema 3
+introduced exclusive `notices`, `not_applicable`, and `ignored` summary
+buckets and reserved `healthy` for checked dependencies whose score is zero;
+schema 4 adds an optional per-finding `baseline` field (`"new"` or `"known"`)
+that appears only when a run compared against `--baseline`, so a report
+produced without one is byte-identical to schema 3.
 
 <details>
 <summary><b>Shell completions and man page</b></summary>
@@ -312,7 +394,10 @@ Needs Rust 1.91+.
 | Version lag | ✓ | | ✓ | |
 | Maintenance age | ✓ | | | |
 | **Ranked by graph impact** | ✓ | | | |
+| Per-crate score breakdown | ✓ | | | |
+| Baseline / fail only on new | ✓ | | | |
 | JSON output | ✓ | ✓ | | ✓ |
+| SARIF / Security tab | ✓ | | | |
 | License / policy enforcement | | | | ✓ |
 
 They are complementary: use **audit** to block known vulnerabilities,

@@ -48,6 +48,30 @@ pub struct Args {
     #[arg(long = "ignore", value_name = "CRATE", global = true)]
     pub ignore: Vec<String>,
 
+    /// Report only the N highest-scoring dependencies. Applied after
+    /// `--threshold`, so it trims a long report rather than changing what
+    /// counts as a finding. Like `--threshold`, this controls output only and
+    /// never weakens `--fail-on`.
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = clap::value_parser!(u64).range(1..),
+        global = true
+    )]
+    pub top: Option<u64>,
+
+    /// Compare against a baseline report written by `--write-baseline`, and
+    /// evaluate `--fail-on` against only the findings that are new since it.
+    /// Everything already in the baseline is still reported, marked `known`.
+    #[arg(long, value_name = "PATH", global = true)]
+    pub baseline: Option<PathBuf>,
+
+    /// Write this run's JSON report to PATH for a later `--baseline` run to
+    /// compare against. Writes the file regardless of the output format, and
+    /// never changes this run's own exit code.
+    #[arg(long, value_name = "PATH", global = true)]
+    pub write_baseline: Option<PathBuf>,
+
     /// Machine-readable JSON output on stdout (progress goes to stderr).
     /// Deprecated alias for --format json; kept for compatibility.
     #[arg(long, global = true)]
@@ -121,6 +145,15 @@ pub struct Args {
 
 #[derive(Subcommand)]
 pub enum UtilityCommand {
+    /// Show exactly how one crate's score was derived, and what pulls it in
+    Explain {
+        /// Crate name, as it appears in the report
+        #[arg(value_name = "CRATE")]
+        crate_name: String,
+        /// Maximum dependency paths to print (shortest first)
+        #[arg(long, value_name = "N", default_value_t = 5)]
+        max_paths: usize,
+    },
     /// Update prioritized dependencies within their current compatibility line
     Upgrade {
         /// Restrict updates to the resolved crate's current Cargo compatibility line
@@ -178,4 +211,15 @@ pub enum OutputFormat {
     Json,
     /// SARIF 2.1.0 on stdout, for GitHub code scanning and similar tools
     Sarif,
+    /// GitHub-flavored Markdown on stdout, for PR comments and job summaries
+    Markdown,
+}
+
+impl OutputFormat {
+    /// Whether the report body goes to stdout as data rather than as a
+    /// terminal rendering — progress lines are redirected to stderr for
+    /// every one of these, so stdout stays parseable (or pasteable).
+    pub fn is_machine_readable(self) -> bool {
+        !matches!(self, Self::Human)
+    }
 }

@@ -80,6 +80,12 @@ jobs:
   dogfood-action:
     name: dogfood the published Action
     runs-on: ubuntu-latest
+    # Lets the comment path below actually post on same-repo pull requests.
+    # A fork's token has no write access regardless, which is the case the
+    # action already downgrades to a warning rather than a failure.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
       # `./` runs the action.yml in *this* checkout, so a PR that breaks the
@@ -91,5 +97,45 @@ jobs:
       # PR; this job exists to catch the action breaking, not to gate on this
       # repo's own dependency health.
       - uses: ./
+        id: depcheck
         with:
           fail-on: none
+          top: 10
+          comment: true
+
+      # The Markdown and comment steps are `continue-on-error` inside the
+      # action — a comment must never fail someone's build — which means a
+      # broken shell block there would otherwise surface as a warning nobody
+      # reads. Asserting on the outputs here is what makes that code tested.
+      - name: the action produced a usable Markdown report
+        env:
+          MARKDOWN_PATH: ${{ steps.depcheck.outputs.markdown-path }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MARKDOWN_PATH:-}" ]; then
+            echo "::error::the action produced no markdown-path output"
+            exit 1
+          fi
+          if [ ! -s "$MARKDOWN_PATH" ]; then
+            echo "::error::the Markdown report at $MARKDOWN_PATH is empty"
+            exit 1
+          fi
+          if ! head -1 "$MARKDOWN_PATH" | grep -qF '<!-- cargo-depcheck -->'; then
+            echo "::error::the Markdown report is missing its sticky-comment marker"
+            exit 1
+          fi
+          echo "Markdown report looks well-formed:"
+          head -5 "$MARKDOWN_PATH"
+
+      # A baseline written and then immediately compared against must report
+      # nothing new. This is the property the whole feature rests on, and it
+      # is cheap to assert against a real graph rather than only a fixture.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: a baseline round-trip reports no new findings
+        run: |
+          set -euo pipefail
+          cargo run --locked --quiet -- depcheck \
+            --write-baseline "$RUNNER_TEMP/baseline.json" --quiet
+          cargo run --locked --quiet -- depcheck \
+            --baseline "$RUNNER_TEMP/baseline.json" --fail-on warn --quiet

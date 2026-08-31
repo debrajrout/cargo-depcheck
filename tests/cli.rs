@@ -155,6 +155,198 @@ fn invalid_flag_value_exits_two() {
 }
 
 #[test]
+fn top_rejects_zero_rather_than_silently_reporting_nothing() {
+    depcheck()
+        .args([
+            "depcheck",
+            "--top",
+            "0",
+            "--manifest-path",
+            NO_DEPS_MANIFEST,
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn markdown_output_is_plain_and_carries_the_sticky_comment_marker() {
+    let assert = depcheck()
+        .args([
+            "depcheck",
+            "--format",
+            "markdown",
+            "--no-advisories",
+            "--manifest-path",
+            NO_DEPS_MANIFEST,
+        ])
+        .env("CLICOLOR_FORCE", "1")
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+
+    assert!(
+        stdout.starts_with("<!-- cargo-depcheck -->"),
+        "the marker must be first so automation can update its own comment: {stdout}"
+    );
+    // CLICOLOR_FORCE is set above precisely because CI often sets it: the
+    // Markdown body must never carry terminal escapes into a PR comment.
+    assert!(
+        !stdout.contains('\u{1b}'),
+        "ANSI escape leaked into Markdown: {stdout:?}"
+    );
+    assert!(stdout.contains("cargo-depcheck —"), "{stdout}");
+}
+
+#[test]
+fn a_baseline_round_trips_through_a_written_file() {
+    let root = copy_no_deps_fixture();
+    let baseline = root.join("depcheck-baseline.json");
+
+    depcheck()
+        .args([
+            "depcheck",
+            "--no-advisories",
+            "--write-baseline",
+            baseline.to_str().unwrap(),
+            "--manifest-path",
+        ])
+        .arg(root.join("Cargo.toml"))
+        .assert()
+        .success();
+
+    let written = fs::read_to_string(&baseline).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&written).unwrap();
+    assert!(
+        parsed.get("findings").is_some_and(|f| f.is_array()),
+        "a baseline must be a readable report: {written}"
+    );
+
+    // Comparing a run against a baseline taken from that same state must find
+    // nothing new — the property the whole feature rests on.
+    depcheck()
+        .args([
+            "depcheck",
+            "--no-advisories",
+            "--fail-on",
+            "warn",
+            "--baseline",
+            baseline.to_str().unwrap(),
+            "--manifest-path",
+        ])
+        .arg(root.join("Cargo.toml"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0 new"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_missing_baseline_file_explains_how_to_create_one() {
+    depcheck()
+        .args([
+            "depcheck",
+            "--no-advisories",
+            "--baseline",
+            "/nonexistent/depcheck-baseline.json",
+            "--manifest-path",
+            NO_DEPS_MANIFEST,
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--write-baseline"));
+}
+
+#[test]
+fn write_baseline_refuses_a_truncated_report() {
+    depcheck()
+        .args([
+            "depcheck",
+            "--top",
+            "3",
+            "--write-baseline",
+            "/tmp/should-not-be-written.json",
+            "--manifest-path",
+            NO_DEPS_MANIFEST,
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--top cannot be used"));
+    assert!(
+        !std::path::Path::new("/tmp/should-not-be-written.json").exists(),
+        "the rejected run must not have written a baseline"
+    );
+}
+
+#[test]
+fn explain_names_a_missing_crate_and_suggests_close_matches() {
+    depcheck()
+        .args([
+            "depcheck",
+            "explain",
+            "serde",
+            "--no-advisories",
+            "--manifest-path",
+            NO_DEPS_MANIFEST,
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("not in this project's analyzed"))
+        .stderr(predicate::str::contains("--include-build"));
+}
+
+#[test]
+fn explain_rejects_sarif_which_describes_a_project_not_a_crate() {
+    depcheck()
+        .args([
+            "depcheck",
+            "explain",
+            "serde",
+            "--format",
+            "sarif",
+            "--manifest-path",
+            NO_DEPS_MANIFEST,
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--format sarif"));
+}
+
+#[test]
+fn explain_help_documents_the_path_limit() {
+    depcheck()
+        .args(["depcheck", "explain", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--max-paths"));
+}
+
+#[test]
+fn explain_reports_a_path_dependency_with_its_dependency_path() {
+    // The `chain` fixture is all path dependencies, so this stays
+    // network-free while still exercising the real path search:
+    // chain-root → chain-mid → chain-leaf.
+    depcheck()
+        .args([
+            "depcheck",
+            "explain",
+            "chain-leaf",
+            "--no-advisories",
+            "--color",
+            "never",
+            "--manifest-path",
+            PATH_CHAIN_MANIFEST,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("chain-leaf"))
+        .stdout(predicate::str::contains("Pulled in by"))
+        .stdout(predicate::str::contains(
+            "chain-root → chain-mid 0.1.0 → chain-leaf 0.1.0",
+        ));
+}
+
+#[test]
 fn upgrade_help_documents_the_safety_controls() {
     depcheck()
         .args(["depcheck", "upgrade", "--help"])
@@ -193,11 +385,29 @@ fn upgrade_rejects_lockfile_guards_before_analysis() {
 }
 
 #[test]
+fn upgrade_rejects_the_baseline_flags_instead_of_ignoring_them() {
+    // `upgrade` reports no findings, so it has nothing to mark new or known.
+    // Accepting these silently would drop a flag the user passed deliberately.
+    for args in [
+        vec!["--baseline", "baseline.json"],
+        vec!["--write-baseline", "baseline.json"],
+    ] {
+        depcheck()
+            .args(["depcheck", "upgrade", "--compatible"])
+            .args(args)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("cannot be used"));
+    }
+}
+
+#[test]
 fn upgrade_rejects_machine_readable_formats() {
     for args in [
         vec!["--json"],
         vec!["--format", "sarif"],
         vec!["--format", "json"],
+        vec!["--format", "markdown"],
     ] {
         depcheck()
             .args(["depcheck", "upgrade", "--compatible"])
@@ -245,7 +455,7 @@ fn path_dependencies_are_not_applicable_not_unknown() {
     let report: serde_json::Value =
         serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON report");
 
-    assert_eq!(report["schema_version"], 3);
+    assert_eq!(report["schema_version"], 4);
     assert_eq!(report["summary"]["total"], 2);
     assert_eq!(report["summary"]["not_applicable"], 2);
     assert_eq!(report["summary"]["unknown"], 0);

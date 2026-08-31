@@ -22,6 +22,13 @@ pub struct Analysis {
     pub duplicates: Vec<report::JsonDuplicate>,
     pub ignored_with_reason: Vec<(String, Option<String>)>,
     pub visible_findings: Vec<report::Finding>,
+    /// Every analyzed dependency, highest score first, *including* the ones
+    /// suppressed by an ignore rule and the ones below the threshold. The
+    /// report never shows these, but `explain` has to: asking why a crate
+    /// scored what it did is exactly the case where "it's below your
+    /// threshold" or "you ignored it" is the answer you need.
+    pub all_findings: Vec<report::Finding>,
+    pub ignored_names: HashSet<String>,
     pub degraded: bool,
 }
 
@@ -203,6 +210,7 @@ pub async fn run(args: &Args, machine_readable: bool, now: DateTime<Utc>) -> Res
                 node,
                 risk,
                 advisories: node_advisories,
+                baseline_state: crate::baseline::BaselineState::NotCompared,
             }
         })
         .collect();
@@ -228,22 +236,29 @@ pub async fn run(args: &Args, machine_readable: bool, now: DateTime<Utc>) -> Res
         .iter()
         .filter(|f| ignore.contains(&f.node.name))
         .count();
+    let mut all_findings = all_findings;
+    all_findings.sort_by(by_score_desc);
     let mut analyzed_findings: Vec<report::Finding> = all_findings
-        .into_iter()
+        .iter()
         .filter(|finding| !ignore.contains(&finding.node.name))
+        .cloned()
         .collect();
     let summary = report::summarize(&analyzed_findings, &meta_map, ignored_count, degraded);
-    analyzed_findings.sort_by(|a, b| {
-        b.risk
-            .total
-            .partial_cmp(&a.risk.total)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let visible_findings = analyzed_findings
+    analyzed_findings.sort_by(by_score_desc);
+    let mut visible_findings: Vec<report::Finding> = analyzed_findings
         .iter()
         .filter(|finding| score::rounded(finding.risk.total) >= threshold)
         .cloned()
         .collect();
+
+    // `--top` trims an already-ranked list, so it can only ever remove
+    // lower-scoring entries. Applied here rather than in the renderers so
+    // every format agrees on what "the top N" means, and applied *after*
+    // `summarize` so the summary counts (and therefore `--fail-on`) still
+    // describe the whole graph.
+    if let Some(top) = args.top {
+        visible_findings.truncate(top as usize);
+    }
 
     Ok(Analysis {
         metadata,
@@ -257,8 +272,17 @@ pub async fn run(args: &Args, machine_readable: bool, now: DateTime<Utc>) -> Res
         duplicates,
         ignored_with_reason,
         visible_findings,
+        all_findings,
+        ignored_names: ignore,
         degraded,
     })
+}
+
+fn by_score_desc(a: &report::Finding, b: &report::Finding) -> std::cmp::Ordering {
+    b.risk
+        .total
+        .partial_cmp(&a.risk.total)
+        .unwrap_or(std::cmp::Ordering::Equal)
 }
 
 fn collect_registry_results(

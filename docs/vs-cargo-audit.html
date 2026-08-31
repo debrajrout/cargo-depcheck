@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cargo-audit vs cargo-outdated vs cargo-deny vs cargo-depcheck</title>
+<meta name="description" content="Which Rust dependency tool answers which question, and how to combine them. A side-by-side comparison of cargo-audit, cargo-outdated, cargo-deny, and cargo-depcheck.">
+<link rel="canonical" href="https://debrajrout.github.io/cargo-depcheck/vs-cargo-audit.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="cargo-audit vs cargo-outdated vs cargo-deny vs cargo-depcheck">
+<meta property="og:description" content="Which Rust dependency tool answers which question, and how to combine them.">
+<meta property="og:url" content="https://debrajrout.github.io/cargo-depcheck/vs-cargo-audit.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "cargo-audit vs cargo-outdated vs cargo-deny vs cargo-depcheck",
+  "description": "Which Rust dependency tool answers which question, and how to combine them.",
+  "url": "https://debrajrout.github.io/cargo-depcheck/vs-cargo-audit.html",
+  "isPartOf": { "@type": "WebSite", "name": "cargo-depcheck", "url": "https://debrajrout.github.io/cargo-depcheck/" }
+}
+</script>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="./">cargo<span>-</span>depcheck</a>
+    <nav class="site">
+      <a href="./">Overview</a>
+      <a href="scoring.html">Scoring</a>
+      <a href="vs-cargo-audit.html" aria-current="page">Compared to other tools</a>
+      <a href="https://github.com/debrajrout/cargo-depcheck">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap hero">
+  <p class="eyebrow">Comparison</p>
+  <h1>cargo-audit vs cargo-outdated vs cargo-deny vs cargo-depcheck</h1>
+  <p class="lede">
+    These tools are not competitors so much as answers to four different
+    questions. Knowing which question you are asking is most of the choice.
+  </p>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Tool</th><th>The question it answers</th><th>Typical use</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>cargo-audit</strong></td>
+          <td>Is anything in my tree <em>known to be vulnerable</em>?</td>
+          <td>Block a merge on a published CVE</td>
+        </tr>
+        <tr>
+          <td><strong>cargo-outdated</strong></td>
+          <td>What is <em>behind</em> its latest release?</td>
+          <td>See what could be bumped</td>
+        </tr>
+        <tr>
+          <td><strong>cargo-deny</strong></td>
+          <td>Does my tree comply with <em>our policy</em>?</td>
+          <td>Enforce licenses, bans, sources, duplicates</td>
+        </tr>
+        <tr>
+          <td><strong>cargo-depcheck</strong></td>
+          <td>Which dependency deserves attention <em>first</em>?</td>
+          <td>Decide where limited maintenance time goes</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Feature by feature</h2>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Capability</th>
+          <th class="mid">depcheck</th>
+          <th class="mid">audit</th>
+          <th class="mid">outdated</th>
+          <th class="mid">deny</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>RustSec security advisories</td><td class="mid yes">✓</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid yes">✓</td></tr>
+        <tr><td>Version lag behind latest</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid yes">✓</td><td class="mid no">—</td></tr>
+        <tr><td>Maintenance / publish age</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid no">—</td><td class="mid no">—</td></tr>
+        <tr><td>Yanked-version detection</td><td class="mid yes">✓</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid no">—</td></tr>
+        <tr><td><strong>Ranked by dependency-graph impact</strong></td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid no">—</td><td class="mid no">—</td></tr>
+        <tr><td>Per-crate score breakdown and paths</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid no">—</td><td class="mid no">—</td></tr>
+        <tr><td>Baseline — fail only on new findings</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid no">—</td><td class="mid no">—</td></tr>
+        <tr><td>Duplicate-version detection</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid no">—</td><td class="mid yes">✓</td></tr>
+        <tr><td>License / policy enforcement</td><td class="mid no">—</td><td class="mid no">—</td><td class="mid no">—</td><td class="mid yes">✓</td></tr>
+        <tr><td>JSON output</td><td class="mid yes">✓</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid yes">✓</td></tr>
+        <tr><td>SARIF / GitHub Security tab</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid no">—</td><td class="mid no">—</td></tr>
+        <tr><td>Markdown output for PR comments</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid no">—</td><td class="mid no">—</td></tr>
+        <tr><td>Applies lockfile upgrades</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="mid no">—</td><td class="mid no">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    Compiled from each tool’s documented behavior. If something here is out of
+    date or unfair to a tool, that is worth an
+    <a href="https://github.com/debrajrout/cargo-depcheck/issues/new/choose">issue</a> —
+    a comparison table nobody corrects is just marketing.
+  </p>
+
+  <h2>Why “ranked” is the difference that matters</h2>
+  <p>
+    Run <code>cargo outdated</code> on a mature project and you get a list.
+    Forty crates are behind. Which one do you fix on a Tuesday afternoon with
+    an hour to spare? The list does not say, because a flat list cannot: it has
+    no notion of how much of your project rests on each entry.
+  </p>
+  <p>
+    depcheck scores each crate and multiplies by graph impact, so a crate one
+    breaking release behind that half your tree depends on outranks a leaf five
+    releases behind that nothing imports. That single multiplier is what turns
+    an inventory into an order of work —
+    <a href="scoring.html">the scoring reference</a> shows exactly how it is
+    computed, and why it is absolute rather than relative to your project.
+  </p>
+
+  <h2>Is cargo-depcheck a cargo-audit replacement?</h2>
+  <p>
+    No, and it should not be treated as one. cargo-audit is the right tool to
+    <em>block</em> a merge on a known vulnerability: it is focused, widely
+    trusted, and maintained by the RustSec team who curate the advisory
+    database. depcheck reads that same database, but its job is prioritization,
+    which is a judgment call expressed as a score rather than a yes/no gate.
+  </p>
+  <p>
+    A finding in depcheck also does not mean you are exploitable — there is no
+    reachability analysis, so it cannot tell whether you call the affected
+    function. It means the crate is in your tree and something about it
+    deserves a look.
+  </p>
+
+  <h2>Using them together</h2>
+  <p>
+    They compose cleanly, and none of them need to be the only one in your CI:
+  </p>
+  <pre><code># block on known vulnerabilities
+cargo audit
+
+# enforce license and source policy
+cargo deny check
+
+# rank what to spend maintenance time on, failing only on regressions
+cargo depcheck --baseline depcheck-baseline.json --fail-on critical</code></pre>
+
+  <p>
+    In GitHub Actions, the depcheck step can post the ranked report as a pull
+    request comment while audit and deny keep their pass/fail role:
+  </p>
+  <pre><code>- uses: debrajrout/cargo-depcheck@v1
+  with:
+    comment: true
+    top: 10
+    fail-on: critical</code></pre>
+
+  <div class="actions">
+    <a class="btn btn-primary" href="./">What cargo-depcheck does</a>
+    <a class="btn" href="scoring.html">How scoring works</a>
+    <a class="btn" href="https://github.com/debrajrout/cargo-depcheck">GitHub</a>
+  </div>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    cargo-depcheck is dual-licensed under MIT or Apache-2.0 ·
+    <a href="https://github.com/debrajrout/cargo-depcheck">GitHub</a> ·
+    <a href="https://crates.io/crates/cargo-depcheck">crates.io</a> ·
+    <a href="./">Overview</a>
+  </div>
+</footer>
+
+</body>
+</html>

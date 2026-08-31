@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-31
+
+The ranked report answers "what should I fix first?". This release adds the
+two things you need once it has answered: a way to interrogate a score, and a
+way to adopt the gate on a project that already has a backlog.
+
+### Added
+
+- **`cargo depcheck explain <crate>`** shows the whole derivation of one
+  crate's score — each signal's points against its cap with the evidence
+  behind it, the graph multiplier and the count it came from, and the
+  arithmetic that produces the total. It also prints the dependency paths
+  from your workspace to that crate, shortest first, so a transitive finding
+  names the direct dependency that actually pulled it in rather than leaving
+  you to run `cargo tree -i` separately. Paths label the hop where they cross
+  a build-script or dev-only edge, and only follow edges the current
+  `--include-build`/`--include-dev` settings would score, so what's shown is
+  what produced the number.
+
+  Where registry metadata is available it also re-scores the crate at each
+  upgrade target — within its Cargo compatibility line, and at the latest
+  stable — against the same advisory database, so "would upgrading help?" is
+  answered with a real projected score rather than an assumption that an
+  upgrade only cancels version lag. Supports `--format json` (its own
+  `schema_version`, independent of the report's).
+
+- **`--baseline <PATH>` and `--write-baseline <PATH>`** separate an inherited
+  backlog from a regression. `--write-baseline` stores the current report;
+  a later `--baseline` run reports everything as usual but marks each finding
+  `new` or `known`, and `--fail-on` then considers only the new ones. A
+  project with 40 existing findings can adopt `--fail-on warn` on day one.
+
+  A finding counts as new if the baseline has no entry for that crate *at that
+  version*, if it carries an advisory the baseline didn't, or if it has
+  crossed into a higher severity. Score drift alone never counts: maintenance
+  points grow every day a crate isn't republished, so matching on exact
+  scores would report every untouched dependency as new on the next run.
+
+  The baseline file is an ordinary JSON report, so any archived report works
+  as one. `--top` is rejected with `--write-baseline` (a truncated baseline
+  reports its omissions as new next run), as is pointing both flags at the
+  same path. A baseline written at a different `--threshold` warns rather
+  than silently reporting the gap as new findings.
+
+- **`--format markdown`** renders the report as GitHub-flavored Markdown for
+  PR comments and job summaries, with a `<!-- cargo-depcheck -->` marker as
+  its first line so automation can update its own comment instead of adding
+  one per push. Plain text by construction — no ANSI escapes even under
+  `CLICOLOR_FORCE`, which CI sets often enough to matter.
+
+- **`--top N`** reports only the N highest-scoring dependencies. Applied
+  after `--threshold` and after the summary is computed, so like
+  `--threshold` it controls output only and never weakens `--fail-on`.
+
+- **The GitHub Action can comment on pull requests** (`comment: true`,
+  requires `pull-requests: write`), updating one sticky comment per
+  `comment-key` rather than adding a comment on every push. It runs before
+  the gating step, so a job that fails still posts the report explaining
+  why, and a missing permission downgrades to a warning instead of failing
+  the job. The job summary now carries the full report rather than a bare
+  counts table, and `top` and `baseline` are exposed as inputs.
+
+### Changed
+
+- **JSON report schema 4** adds an optional per-finding `baseline` field
+  (`"new"` or `"known"`), present only when a run actually compared against a
+  baseline. A report produced without `--baseline` is byte-identical to what
+  schema 3 emitted.
+
+### Fixed
+
+- `explain`'s version-lag detail agreed in number with its own count
+  ("3 breaking releases", not "3 breaking release") — caught by a test
+  written alongside the feature.
+- The Markdown renderer escapes pipe characters in crate names as well as in
+  reason text, so no cell content can shift a table's columns.
+
 ## [0.3.1] - 2026-08-24
 
 ### Fixed (pre-release review)

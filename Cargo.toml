@@ -1,13 +1,13 @@
 [package]
 name = "cargo-depcheck"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.91"
 description = "Ranked dependency health report — security advisories, version lag, and maintenance signals weighted by graph depth"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/debrajrout/cargo-depcheck"
-homepage = "https://github.com/debrajrout/cargo-depcheck"
-documentation = "https://github.com/debrajrout/cargo-depcheck#readme"
+homepage = "https://debrajrout.github.io/cargo-depcheck/"
+documentation = "https://debrajrout.github.io/cargo-depcheck/"
 readme = "README.md"
 keywords = ["cargo", "dependencies", "security", "audit", "maintenance"]
 categories = ["command-line-utilities", "development-tools::cargo-plugins"]
@@ -16,6 +16,15 @@ exclude = [
     "tests/fixtures/",
     "tests/schemas/",
     "IMPLEMENTATION_PLAN.md",
+    # The documentation site and the demo generator are published to GitHub
+    # Pages, not needed to build the crate. The README references the demo
+    # images by absolute URL so they still render on crates.io.
+    "docs/assets/",
+    "docs/*.html",
+    "docs/*.css",
+    "docs/robots.txt",
+    "docs/sitemap.xml",
+    "tools/",
 ]
 
 [dependencies]

@@ -77,28 +77,77 @@ jobs:
       - run: cargo metadata --format-version 1 > /dev/null
       - run: git diff --exit-code Cargo.lock
 
+  # Two jobs, because the action has two failure modes that need different
+  # binaries to catch.
+  #
+  # This one runs `./` — the action.yml in this checkout — exactly as a user
+  # would, against the binary it downloads from the latest release. It is what
+  # catches a broken install step, a bad archive name, or a shell error in the
+  # gating run. It deliberately passes no input that needs an unreleased
+  # binary: the download can only ever fetch the *previous* release, so those
+  # belong in the job below.
   dogfood-action:
     name: dogfood the published Action
     runs-on: ubuntu-latest
-    # Lets the comment path below actually post on same-repo pull requests.
-    # A fork's token has no write access regardless, which is the case the
-    # action already downgrades to a warning rather than a failure.
+    steps:
+      - uses: actions/checkout@v7
+      # fail-on: none so a real dependency finding never blocks an unrelated
+      # PR; this job exists to catch the action breaking, not to gate on this
+      # repo's own dependency health.
+      #
+      # summary: false keeps this job on flags every released binary
+      # understands. With it on, the Markdown step would ask the previous
+      # release for `--format markdown`, which it may not have, and emit a
+      # warning on every run until the next release catches up.
+      - uses: ./
+        id: depcheck
+        with:
+          fail-on: none
+          summary: false
+      - name: the action reported real counts
+        env:
+          CRITICAL: ${{ steps.depcheck.outputs.critical }}
+          REPORT_PATH: ${{ steps.depcheck.outputs.report-path }}
+        run: |
+          set -euo pipefail
+          # "unknown" is what the output extractor falls back to when the JSON
+          # report is missing or unreadable, so it is the signal that the
+          # action ran but produced nothing usable.
+          if [ -z "${CRITICAL:-}" ] || [ "$CRITICAL" = "unknown" ]; then
+            echo "::error::the action produced no usable summary counts"
+            exit 1
+          fi
+          test -s "$REPORT_PATH" || { echo "::error::no JSON report at $REPORT_PATH"; exit 1; }
+
+  # This one builds the binary from the checkout and hands it to the action via
+  # `version: local`, so inputs that depend on unreleased behavior (top,
+  # baseline, the Markdown and comment paths) are exercised before they ship
+  # rather than after.
+  dogfood-action-unreleased:
+    name: dogfood the Action against this checkout
+    runs-on: ubuntu-latest
+    # Lets the comment path actually post on same-repo pull requests. A fork's
+    # token has no write access regardless, which is the case the action
+    # already downgrades to a warning rather than a failure.
     permissions:
       contents: read
       pull-requests: write
     steps:
       - uses: actions/checkout@v7
-      # `./` runs the action.yml in *this* checkout, so a PR that breaks the
-      # action fails here. Pointing at the published @v1 instead would only
-      # ever re-test the last release, letting a broken action.yml merge
-      # green — the action has no other test.
-      #
-      # fail-on: none so a real dependency finding never blocks an unrelated
-      # PR; this job exists to catch the action breaking, not to gate on this
-      # repo's own dependency health.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build this checkout's binary and put it on PATH
+        run: |
+          set -euo pipefail
+          cargo build --locked
+          mkdir -p "$RUNNER_TEMP/local-bin"
+          cp target/debug/cargo-depcheck "$RUNNER_TEMP/local-bin/"
+          echo "$RUNNER_TEMP/local-bin" >> "$GITHUB_PATH"
+
       - uses: ./
         id: depcheck
         with:
+          version: local
           fail-on: none
           top: 10
           comment: true
@@ -130,12 +179,9 @@ jobs:
       # A baseline written and then immediately compared against must report
       # nothing new. This is the property the whole feature rests on, and it
       # is cheap to assert against a real graph rather than only a fixture.
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - name: a baseline round-trip reports no new findings
         run: |
           set -euo pipefail
-          cargo run --locked --quiet -- depcheck \
-            --write-baseline "$RUNNER_TEMP/baseline.json" --quiet
-          cargo run --locked --quiet -- depcheck \
-            --baseline "$RUNNER_TEMP/baseline.json" --fail-on warn --quiet
+          cargo-depcheck depcheck --write-baseline "$RUNNER_TEMP/baseline.json" --quiet
+          cargo-depcheck depcheck --baseline "$RUNNER_TEMP/baseline.json" \
+            --fail-on warn --quiet

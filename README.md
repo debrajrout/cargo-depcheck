@@ -261,6 +261,10 @@ Other inputs: `version`, `manifest-path`, `threshold`, `top`, `baseline`,
 Outputs also include `report-path`, `markdown-path`, and `comment-url`.
 See [action.yml](action.yml).
 
+`version: local` skips the download and runs a `cargo-depcheck` already on
+`PATH` — for a job that installed it with `cargo install`, a vendored binary,
+or a runner with no access to GitHub releases.
+
 ## Project configuration
 
 Commit your policy so every developer and CI job uses the same settings:

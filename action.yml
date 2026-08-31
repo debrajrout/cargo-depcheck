@@ -7,7 +7,12 @@ branding:
 
 inputs:
   version:
-    description: 'cargo-depcheck release tag to install (e.g. v0.2.0). Defaults to the latest release.'
+    description: >-
+      cargo-depcheck release tag to install (e.g. v0.2.0). Defaults to the
+      latest release. Use `local` to skip the download and run a
+      cargo-depcheck already on PATH — for a job that installed it with
+      `cargo install`, a vendored binary, or a runner with no access to
+      GitHub releases.
     required: false
     default: 'latest'
   token:
@@ -130,6 +135,23 @@ runs:
         fi
 
         version="$CARGO_DEPCHECK_VERSION"
+
+        # `local` runs a cargo-depcheck that is already on PATH instead of
+        # downloading one. This is what lets this repository dogfood its own
+        # action against the binary in the current checkout: the download path
+        # can only ever fetch the *previous* release, so an input that needs
+        # an unreleased binary would otherwise be untestable until after it
+        # shipped — exactly the gap that let a broken combination merge.
+        if [ "$version" = "local" ]; then
+          if ! command -v cargo-depcheck >/dev/null 2>&1; then
+            echo "::error::version: local requires cargo-depcheck to already be on PATH"
+            exit 1
+          fi
+          echo "Using $(command -v cargo-depcheck)"
+          cargo-depcheck depcheck --version
+          exit 0
+        fi
+
         if [ "$version" = "latest" ]; then
           if ! release=$(curl -fsSL "${auth[@]}" https://api.github.com/repos/debrajrout/cargo-depcheck/releases/latest); then
             echo "::error::Could not resolve the latest cargo-depcheck release. Pin an explicit 'version:' or retry."

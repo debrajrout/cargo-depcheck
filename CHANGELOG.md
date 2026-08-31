@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The GitHub Action accepts `version: local`, which skips the release download
+  and runs a `cargo-depcheck` already on `PATH` — for a job that installed it
+  with `cargo install`, a vendored binary, or a runner with no access to
+  GitHub releases.
+
+### Fixed
+
+- **CI could not test an Action input before the release that added it.** The
+  dogfood job runs this checkout's `action.yml`, but that action installs the
+  latest *published* binary — so passing it `top`/`comment` (new in 0.4.0)
+  asked the previous release for flags it does not have, and the job failed
+  with `unexpected argument '--top'`. The job is now split: one half exercises
+  the install and gating path against the published binary exactly as a user
+  gets it, the other builds this checkout's binary and hands it to the action
+  via `version: local` to cover inputs that depend on unreleased behavior.
+
 ## [0.4.0] - 2026-08-31
 
 The ranked report answers "what should I fix first?". This release adds the

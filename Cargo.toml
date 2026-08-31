@@ -73,5 +73,5 @@ codegen-units = 1
 [dev-dependencies]
 assert_cmd = "2"
 insta = "1"
-jsonschema = "0.50.1"
+jsonschema = "0.52.0"
 predicates = "3"

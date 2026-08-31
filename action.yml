@@ -190,7 +190,7 @@ runs:
 
     - name: Upload SARIF to the Security tab
       if: inputs.sarif == 'true' && steps.sarif.outputs.sarif-path != ''
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: ${{ steps.sarif.outputs.sarif-path }}
         category: ${{ inputs.sarif-category }}

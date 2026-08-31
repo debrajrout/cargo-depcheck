@@ -333,6 +333,7 @@ mod tests {
                 level,
             },
             advisories: Vec::new(),
+            baseline_state: crate::baseline::BaselineState::NotCompared,
         }
     }
 

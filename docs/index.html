@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cargo-depcheck — ranked dependency health for Rust</title>
+<meta name="description" content="A Rust dependency health report that ranks what to fix first. Combines RustSec advisories, version lag, and maintenance age, weighted by how much of your dependency graph relies on each crate.">
+<link rel="canonical" href="https://debrajrout.github.io/cargo-depcheck/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="cargo-depcheck — ranked dependency health for Rust">
+<meta property="og:description" content="cargo audit tells you what is vulnerable. cargo outdated tells you what is old. cargo depcheck tells you which dependency deserves attention first.">
+<meta property="og:url" content="https://debrajrout.github.io/cargo-depcheck/">
+<meta property="og:image" content="https://debrajrout.github.io/cargo-depcheck/assets/demo-report.svg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "cargo-depcheck",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux, macOS, Windows",
+  "programmingLanguage": "Rust",
+  "description": "Ranked dependency health report for Rust projects: RustSec advisories, version lag, and maintenance age weighted by dependency-graph impact.",
+  "url": "https://debrajrout.github.io/cargo-depcheck/",
+  "codeRepository": "https://github.com/debrajrout/cargo-depcheck",
+  "downloadUrl": "https://crates.io/crates/cargo-depcheck",
+  "license": "https://spdx.org/licenses/MIT.html",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap wrap-wide">
+    <a class="brand" href="./">cargo<span>-</span>depcheck</a>
+    <nav class="site">
+      <a href="./" aria-current="page">Overview</a>
+      <a href="scoring.html">Scoring</a>
+      <a href="vs-cargo-audit.html">Compared to other tools</a>
+      <a href="https://github.com/debrajrout/cargo-depcheck">GitHub</a>
+      <a href="https://crates.io/crates/cargo-depcheck">crates.io</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap wrap-wide hero">
+  <p class="eyebrow">Rust dependency health</p>
+  <h1>Your dependency tree has 300 crates. You have time for three.</h1>
+  <p class="lede">
+    <code>cargo audit</code> answers “is this vulnerable?”. <code>cargo outdated</code>
+    answers “is this old?”. <strong>cargo-depcheck answers the question you ask
+    next:</strong> which dependency deserves attention first?
+  </p>
+
+  <div class="actions">
+    <a class="btn btn-primary" href="https://crates.io/crates/cargo-depcheck">Install from crates.io</a>
+    <a class="btn" href="https://github.com/debrajrout/cargo-depcheck">Source on GitHub</a>
+    <a class="btn" href="scoring.html">How scoring works</a>
+  </div>
+
+  <img class="demo" src="assets/demo-report.svg"
+       alt="Terminal output: cargo depcheck ranking the three highest-scoring dependencies, each with its score, severity tag, and the reasons behind it"
+       width="1081" height="577" loading="eager">
+
+  <pre><code>cargo install cargo-depcheck
+cd your-rust-project
+cargo depcheck</code></pre>
+
+  <h2>One ranked list, from four signals</h2>
+  <p>
+    Every crate in your resolved graph gets a score from 0 to 100. Three
+    signals add up, then a graph multiplier scales the result by how much of
+    your project actually rests on that crate:
+  </p>
+
+  <div class="formula">score = (security + version_lag + maintenance) × graph_weight</div>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Signal</th><th class="num">Max</th><th>Source</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Security</td><td class="num">50</td><td>RustSec advisories, or a yanked version</td></tr>
+        <tr><td>Version lag</td><td class="num">25</td><td>Releases behind the latest stable, by Cargo’s compatibility rule</td></tr>
+        <tr><td>Maintenance</td><td class="num">15</td><td>Days since the crate’s latest publish, across all versions</td></tr>
+        <tr><td><strong>× Graph weight</strong></td><td class="num">1.0–2.0</td><td>Crates depending on this one, directly or transitively</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    <strong>That multiplier is the point.</strong> A stale leaf crate nobody
+    imports scores below the same staleness in a crate holding up thirty
+    others. It is also absolute rather than relative to your project, so a
+    threshold you tune once means the same thing everywhere —
+    <a href="scoring.html">the scoring reference</a> explains why that matters.
+  </p>
+
+  <h2>A score you can interrogate</h2>
+  <p>
+    A ranking is only useful if you can check it. <code>explain</code> shows
+    the whole derivation for one crate — every signal against its cap with the
+    evidence behind it, the arithmetic that produces the total, what the score
+    would become if you upgraded, and which of your own dependencies pulled
+    the crate in:
+  </p>
+
+  <pre><code>cargo depcheck explain wasi</code></pre>
+
+  <img class="demo" src="assets/demo-explain.svg"
+       alt="Terminal output: cargo depcheck explain breaking wasi's score into security, version lag, maintenance and graph weight, projecting the score after an upgrade, and listing the dependency paths that reach it"
+       width="886" height="482" loading="lazy">
+
+  <h2>Built for CI, not just the terminal</h2>
+
+  <div class="cards">
+    <div class="card">
+      <h3>Exit codes, not output parsing</h3>
+      <p><code>--fail-on critical</code> exits non-zero. A separate exit code marks an incomplete run, so a network failure never reads as a clean report.</p>
+    </div>
+    <div class="card">
+      <h3>Adopt it on an existing backlog</h3>
+      <p>Store a baseline, and <code>--fail-on</code> then considers only findings that are new since it. Day-one adoption without a red build.</p>
+    </div>
+    <div class="card">
+      <h3>Pull-request comments</h3>
+      <p><code>--format markdown</code>, plus a GitHub Action that updates one sticky comment per push instead of adding another.</p>
+    </div>
+    <div class="card">
+      <h3>Security tab</h3>
+      <p>SARIF 2.1.0 output with a sortable severity for every finding — including the ~65% of RustSec advisories that carry no CVSS score.</p>
+    </div>
+  </div>
+
+  <pre><code>- uses: debrajrout/cargo-depcheck@v1
+  with:
+    fail-on: critical
+    comment: true
+    baseline: depcheck-baseline.json</code></pre>
+
+  <h2>What it deliberately does not do</h2>
+  <ul>
+    <li><strong>No reachability analysis.</strong> A finding means the crate is in your tree, not that you are exploitable.</li>
+    <li><strong>No license or policy enforcement.</strong> That is <a href="https://github.com/EmbarkStudios/cargo-deny">cargo-deny</a>’s job.</li>
+    <li><strong>Not a replacement for cargo-audit.</strong> Use audit to block merges on known CVEs; use depcheck to decide what to upgrade next.</li>
+  </ul>
+  <p>
+    <a href="vs-cargo-audit.html">See the full comparison with cargo-audit,
+    cargo-outdated, and cargo-deny →</a>
+  </p>
+</main>
+
+<footer class="site">
+  <div class="wrap wrap-wide">
+    cargo-depcheck is dual-licensed under MIT or Apache-2.0 ·
+    <a href="https://github.com/debrajrout/cargo-depcheck">GitHub</a> ·
+    <a href="https://crates.io/crates/cargo-depcheck">crates.io</a> ·
+    <a href="https://github.com/debrajrout/cargo-depcheck/blob/main/CHANGELOG.md">Changelog</a> ·
+    <a href="https://github.com/debrajrout/cargo-depcheck/issues/new/choose">Report an issue</a>
+  </div>
+</footer>
+
+</body>
+</html>

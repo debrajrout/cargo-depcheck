@@ -9,6 +9,7 @@ use semver::Version;
 use serde::Serialize;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::baseline::BaselineState;
 use crate::graph::DependencyNode;
 use crate::registry::Metadata;
 use crate::score;
@@ -30,13 +31,21 @@ const HEADER_FIXED_WIDTH: usize = 1 + 5 + 1 + 3 + 1 + 12;
 /// continuation reads as part of the line above rather than as a new reason.
 const CONTINUATION_INDENT: usize = 5;
 
-pub const JSON_SCHEMA_VERSION: u32 = 3;
+/// Bumped to 4 for the optional per-finding `baseline` field. Everything
+/// schema 3 guaranteed is unchanged: a report produced without `--baseline`
+/// is byte-identical to what schema 3 emitted, and the new key appears only
+/// when a comparison actually happened.
+pub const JSON_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone)]
 pub struct Finding {
     pub node: DependencyNode,
     pub risk: RiskScore,
     pub advisories: Vec<Advisory>,
+    /// Set only when `--baseline` is in play; `NotCompared` otherwise, so
+    /// every report renders exactly as before when there is nothing to
+    /// compare against.
+    pub baseline_state: BaselineState,
 }
 
 pub struct ReportSummary {
@@ -84,7 +93,7 @@ pub struct JsonProject {
     pub manifest_path: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct JsonDuplicate {
     pub name: String,
     pub versions: Vec<String>,
@@ -141,6 +150,11 @@ pub struct JsonFinding {
     pub components: JsonComponents,
     pub reasons: Vec<String>,
     pub advisories: Vec<String>,
+    /// `"new"` or `"known"` when this run compared against `--baseline`;
+    /// omitted entirely otherwise, so a report produced without a baseline
+    /// keeps exactly the shape it had before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<&'static str>,
 }
 
 /// A prominent, hard-to-miss warning for when crates.io metadata could not
@@ -678,6 +692,7 @@ fn json_finding(
             now,
         ),
         advisories: finding.advisories.iter().map(advisory_label).collect(),
+        baseline: finding.baseline_state.as_str(),
     }
 }
 
@@ -685,7 +700,7 @@ fn round1(value: f64) -> f64 {
     (value * 10.0).round() / 10.0
 }
 
-fn advisory_label(advisory: &Advisory) -> String {
+pub(crate) fn advisory_label(advisory: &Advisory) -> String {
     if let Some(info) = &advisory.metadata.informational {
         return info.to_string();
     }
@@ -734,13 +749,21 @@ fn write_finding(
     let (header, visible_width) = build_header(finding, level, inner_width);
     writeln!(out, "{}", boxed_line(&header, visible_width, inner_width)).unwrap();
 
-    for line in reason_lines(
+    // Only new findings are annotated. Tagging the known ones too would put a
+    // line on every row of an inherited backlog — the exact wall of text a
+    // baseline exists to quiet down.
+    let baseline_line = match finding.baseline_state {
+        BaselineState::New(reason) => Some(format!("new: {}", reason.describe())),
+        BaselineState::Known | BaselineState::NotCompared => None,
+    };
+
+    for line in baseline_line.into_iter().chain(reason_lines(
         &finding.node,
         &finding.risk,
         &finding.advisories,
         meta_map,
         now,
-    ) {
+    )) {
         for piece in wrap_to_width(&line, inner_width.saturating_sub(3)) {
             let detail = format!("   {piece}");
             writeln!(out, "{}", boxed_line(&detail, detail.width(), inner_width)).unwrap();
@@ -1162,6 +1185,7 @@ mod tests {
                 level,
             },
             advisories: Vec::new(),
+            baseline_state: crate::baseline::BaselineState::NotCompared,
         }
     }
 
@@ -1304,6 +1328,7 @@ mod tests {
                 level: RiskLevel::Warn,
             },
             advisories: Vec::new(),
+            baseline_state: crate::baseline::BaselineState::NotCompared,
         };
 
         for inner in MIN_INNER_WIDTH..=MAX_INNER_WIDTH {
@@ -1389,6 +1414,7 @@ mod tests {
                     level: RiskLevel::Critical,
                 },
                 advisories: Vec::new(),
+                baseline_state: crate::baseline::BaselineState::NotCompared,
             },
             Finding {
                 node: DependencyNode {
@@ -1410,6 +1436,7 @@ mod tests {
                     level: RiskLevel::Warn,
                 },
                 advisories: Vec::new(),
+                baseline_state: crate::baseline::BaselineState::NotCompared,
             },
             Finding {
                 node: DependencyNode {
@@ -1431,6 +1458,7 @@ mod tests {
                     level: RiskLevel::Low,
                 },
                 advisories: Vec::new(),
+                baseline_state: crate::baseline::BaselineState::NotCompared,
             },
         ];
 

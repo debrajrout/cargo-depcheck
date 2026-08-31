@@ -152,8 +152,19 @@ fn validate_flags(args: &Args, upgrade_args: &UpgradeArgs) {
         Some("--offline")
     } else if args.json {
         Some("--json")
-    } else if matches!(args.format, Some(OutputFormat::Json | OutputFormat::Sarif)) {
-        Some("--format json/sarif")
+    } else if matches!(
+        args.format,
+        Some(OutputFormat::Json | OutputFormat::Sarif | OutputFormat::Markdown)
+    ) {
+        Some("--format json/sarif/markdown")
+    // The baseline flags describe reporting, and this command reports nothing
+    // it could mark as new or known. Accepting them would make `upgrade`
+    // silently ignore a flag the user meant to change its behavior — worse
+    // than refusing, since nothing in the output would reveal it.
+    } else if args.baseline.is_some() {
+        Some("--baseline")
+    } else if args.write_baseline.is_some() {
+        Some("--write-baseline")
     } else {
         None
     };
@@ -496,6 +507,7 @@ mod tests {
                 level: crate::score::RiskLevel::Warn,
             },
             advisories: Vec::new(),
+            baseline_state: crate::baseline::BaselineState::NotCompared,
         }
     }
 

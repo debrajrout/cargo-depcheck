@@ -51,6 +51,32 @@ inputs:
     description: 'SARIF upload category, useful when running this action more than once in the same workflow'
     required: false
     default: ''
+  comment:
+    description: >-
+      On a pull request, post the report as a comment and update that same
+      comment on later pushes instead of adding a new one. Requires
+      `pull-requests: write` permission on the calling workflow/job. Ignored
+      outside pull-request events.
+    required: false
+    default: 'false'
+  comment-key:
+    description: >-
+      Distinguishes the comment this run owns, for workflows that call this
+      action more than once (a matrix, or several manifests). Each key gets
+      its own comment; runs sharing a key update the same one.
+    required: false
+    default: 'default'
+  top:
+    description: 'Report only the N highest-scoring dependencies (display only; never weakens fail-on)'
+    required: false
+    default: ''
+  baseline:
+    description: >-
+      Path to a baseline report (see `--write-baseline`). With one set,
+      `fail-on` considers only findings that are new since the baseline, so an
+      inherited backlog does not fail every build.
+    required: false
+    default: ''
 
 outputs:
   critical:
@@ -77,6 +103,12 @@ outputs:
   report-path:
     description: 'Path to the full JSON report on disk'
     value: ${{ steps.run.outputs.report-path }}
+  markdown-path:
+    description: 'Path to the Markdown report on disk, when comment or summary output was produced'
+    value: ${{ steps.markdown.outputs.markdown-path }}
+  comment-url:
+    description: 'URL of the pull-request comment this run created or updated, if any'
+    value: ${{ steps.comment.outputs.comment-url }}
 
 runs:
   using: 'composite'
@@ -195,6 +227,92 @@ runs:
         sarif_file: ${{ steps.sarif.outputs.sarif-path }}
         category: ${{ inputs.sarif-category }}
 
+    # Like the SARIF step, this runs before the gating run below: a job that
+    # is about to fail is exactly when the report needs to reach the reviewer,
+    # so producing and posting it must not depend on the gate passing. The
+    # registry and advisory caches are warm from the SARIF step or populated
+    # here, so this is a cheap second pass rather than a second full fetch.
+    - name: Generate the Markdown report
+      if: inputs.comment == 'true' || inputs.summary == 'true'
+      id: markdown
+      shell: bash
+      continue-on-error: true
+      env:
+        INPUT_MANIFEST_PATH: ${{ inputs.manifest-path }}
+        INPUT_THRESHOLD: ${{ inputs.threshold }}
+        INPUT_IGNORE: ${{ inputs.ignore }}
+        INPUT_TOP: ${{ inputs.top }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_ALLOW_INCOMPLETE: ${{ inputs.allow-incomplete }}
+      run: |
+        set -uo pipefail
+        args=(depcheck --format markdown --fail-on none)
+        [ -n "$INPUT_MANIFEST_PATH" ] && args+=(--manifest-path "$INPUT_MANIFEST_PATH")
+        [ -n "$INPUT_THRESHOLD" ] && args+=(--threshold "$INPUT_THRESHOLD")
+        [ -n "$INPUT_TOP" ] && args+=(--top "$INPUT_TOP")
+        [ -n "$INPUT_BASELINE" ] && args+=(--baseline "$INPUT_BASELINE")
+        [ "$INPUT_ALLOW_INCOMPLETE" = "true" ] && args+=(--allow-incomplete)
+        for crate in $INPUT_IGNORE; do
+          args+=(--ignore "$crate")
+        done
+
+        markdown_path="$RUNNER_TEMP/cargo-depcheck.md"
+        code=0
+        cargo-depcheck "${args[@]}" >"$markdown_path" 2>"$RUNNER_TEMP/cargo-depcheck-md-stderr.log" || code=$?
+        cat "$RUNNER_TEMP/cargo-depcheck-md-stderr.log" >&2
+
+        # Exit 3 (incomplete data) still writes a usable report, and saying so
+        # in the comment is more useful than posting nothing.
+        if { [ "$code" -eq 0 ] || [ "$code" -eq 3 ]; } && [ -s "$markdown_path" ]; then
+          echo "markdown-path=$markdown_path" >>"$GITHUB_OUTPUT"
+        else
+          echo "::warning::cargo-depcheck could not produce a Markdown report (exit $code)"
+        fi
+
+    - name: Comment the report on the pull request
+      if: >-
+        inputs.comment == 'true'
+        && github.event.pull_request.number
+        && steps.markdown.outputs.markdown-path != ''
+      id: comment
+      shell: bash
+      # A comment is a courtesy, never a gate: a missing `pull-requests: write`
+      # permission (the default for a pull request from a fork) must not turn a
+      # passing dependency check into a failed job.
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        MARKDOWN_PATH: ${{ steps.markdown.outputs.markdown-path }}
+        COMMENT_KEY: ${{ inputs.comment-key }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -uo pipefail
+
+        # The action's own identity marker, first line of the body. Keyed so a
+        # matrix or multi-manifest workflow updates one comment per key instead
+        # of several runs overwriting each other's single comment.
+        marker="<!-- cargo-depcheck:${COMMENT_KEY} -->"
+        body="$RUNNER_TEMP/cargo-depcheck-comment.md"
+        { echo "$marker"; cat "$MARKDOWN_PATH"; } >"$body"
+
+        existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+          --paginate --jq ".[] | select(.body | startswith(\"$marker\")) | .id" 2>/dev/null | head -1)
+
+        if [ -n "${existing:-}" ]; then
+          url=$(gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" \
+            -F "body=@$body" --jq .html_url) || {
+              echo "::warning::Could not update the existing cargo-depcheck comment. Does the job have 'pull-requests: write'?"
+              exit 0
+            }
+        else
+          url=$(gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            -F "body=@$body" --jq .html_url) || {
+              echo "::warning::Could not post the cargo-depcheck comment. Does the job have 'pull-requests: write'?"
+              exit 0
+            }
+        fi
+        echo "comment-url=$url" >>"$GITHUB_OUTPUT"
+
     - name: Run cargo-depcheck
       id: run
       shell: bash
@@ -205,6 +323,9 @@ runs:
         INPUT_IGNORE: ${{ inputs.ignore }}
         INPUT_ALLOW_INCOMPLETE: ${{ inputs.allow-incomplete }}
         INPUT_SUMMARY: ${{ inputs.summary }}
+        INPUT_TOP: ${{ inputs.top }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        MARKDOWN_PATH: ${{ steps.markdown.outputs.markdown-path }}
       run: |
         set -uo pipefail
 
@@ -213,6 +334,8 @@ runs:
         [ -n "$INPUT_THRESHOLD" ] && args+=(--threshold "$INPUT_THRESHOLD")
         [ -n "$INPUT_FAIL_ON" ] && args+=(--fail-on "$INPUT_FAIL_ON")
         [ "$INPUT_ALLOW_INCOMPLETE" = "true" ] && args+=(--allow-incomplete)
+        [ -n "$INPUT_TOP" ] && args+=(--top "$INPUT_TOP")
+        [ -n "$INPUT_BASELINE" ] && args+=(--baseline "$INPUT_BASELINE")
         for crate in $INPUT_IGNORE; do
           args+=(--ignore "$crate")
         done
@@ -250,13 +373,21 @@ runs:
         } >>"$GITHUB_OUTPUT"
 
         if [ "$INPUT_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-          {
-            echo "### cargo-depcheck"
-            echo
-            echo "| critical | warnings | notices | unknown | not applicable | ignored | healthy |"
-            echo "|---|---|---|---|---|---|---|"
-            echo "| $critical | $warnings | $notices | $unknown_count | $not_applicable | $ignored | $healthy |"
-          } >>"$GITHUB_STEP_SUMMARY"
+          # Prefer the real report: the counts table alone says a job found
+          # four warnings without saying which crates, which is the first
+          # thing anyone reading a job summary wants to know. The table stays
+          # as the fallback for when the Markdown step could not run.
+          if [ -n "${MARKDOWN_PATH:-}" ] && [ -s "${MARKDOWN_PATH:-}" ]; then
+            cat "$MARKDOWN_PATH" >>"$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### cargo-depcheck"
+              echo
+              echo "| critical | warnings | notices | unknown | not applicable | ignored | healthy |"
+              echo "|---|---|---|---|---|---|---|"
+              echo "| $critical | $warnings | $notices | $unknown_count | $not_applicable | $ignored | $healthy |"
+            } >>"$GITHUB_STEP_SUMMARY"
+          fi
         fi
 
         exit "$code"

@@ -69,6 +69,171 @@ pub struct LoadOptions {
     pub frozen: bool,
 }
 
+/// One hop on a dependency path, ordered from a workspace member down to the
+/// crate being explained.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathStep {
+    pub name: String,
+    pub version: semver::Version,
+    /// The kind of the edge that reaches this hop — so a path that crosses a
+    /// build-script or dev-only edge says so at the hop where it happens,
+    /// rather than only in the final node's classification.
+    pub kind: NodeKind,
+}
+
+/// Every dependency path from a workspace member to `target`, shortest first,
+/// capped at `max_paths`.
+///
+/// This answers the question the report itself can't: a crate's graph weight
+/// says *how many* crates rely on it, not *which* of your own dependencies
+/// dragged it in — the thing you actually need to know to act on a finding.
+/// Only edges the current `KindOptions` would traverse are followed, so the
+/// paths shown are exactly the ones that produced the score.
+pub fn dependency_paths(
+    metadata: &cargo_metadata::Metadata,
+    kinds: KindOptions,
+    target: &str,
+    max_paths: usize,
+) -> Result<Vec<Vec<PathStep>>> {
+    let resolve = metadata
+        .resolve
+        .as_ref()
+        .context("no dependency resolution found — is this a valid Cargo project?")?;
+    let workspace_ids: HashSet<&PackageId> = metadata.workspace_members.iter().collect();
+    let children = included_edges(resolve, kinds);
+
+    // Reverse edges, carrying the kind of the edge that was traversed, so a
+    // reconstructed path can label each hop.
+    let mut parents: HashMap<&PackageId, Vec<(&PackageId, NodeKind)>> = HashMap::new();
+    for (source, deps) in &children {
+        for (dep_id, kind) in deps {
+            parents.entry(dep_id).or_default().push((source, *kind));
+        }
+    }
+
+    let package_map: HashMap<&PackageId, &cargo_metadata::Package> =
+        metadata.packages.iter().map(|p| (&p.id, p)).collect();
+
+    let targets: Vec<&PackageId> = resolve
+        .nodes
+        .iter()
+        .map(|n| &n.id)
+        .filter(|id| {
+            package_map
+                .get(*id)
+                .is_some_and(|pkg| pkg.name.as_str() == target)
+        })
+        .collect();
+
+    // Breadth-first over reverse edges, so completed paths come out shortest
+    // first. Each queue entry is a whole path (leaf-first) rather than a bare
+    // node, since the same node can sit on many distinct paths and a single
+    // predecessor map could only ever reconstruct one of them.
+    let mut found: Vec<Vec<PathStep>> = Vec::new();
+    let mut queue: VecDeque<Vec<(&PackageId, NodeKind)>> = targets
+        .iter()
+        .map(|id| vec![(*id, NodeKind::Normal)])
+        .collect();
+
+    // Bounds so a pathological graph can't turn `explain` into a hang: paths
+    // longer than this aren't actionable to read anyway, and the expansion
+    // budget caps total work independently of shape.
+    const MAX_DEPTH: usize = 24;
+    let mut budget = 50_000usize;
+
+    while let Some(path) = queue.pop_front() {
+        if found.len() >= max_paths || budget == 0 {
+            break;
+        }
+        budget -= 1;
+
+        let (head, _) = path[0];
+        if workspace_ids.contains(head) {
+            found.push(
+                path.iter()
+                    .filter_map(|(id, kind)| {
+                        let pkg = package_map.get(id)?;
+                        Some(PathStep {
+                            name: pkg.name.to_string(),
+                            version: pkg.version.clone(),
+                            kind: *kind,
+                        })
+                    })
+                    .collect(),
+            );
+            continue;
+        }
+
+        if path.len() >= MAX_DEPTH {
+            continue;
+        }
+
+        for (parent, edge_kind) in parents.get(head).into_iter().flatten() {
+            // A path must never revisit a node it already contains: cyclic
+            // dev-dependency edges are legal in Cargo, and without this the
+            // walk would loop forever inside one.
+            if path.iter().any(|(id, _)| id == parent) {
+                continue;
+            }
+            let mut next = Vec::with_capacity(path.len() + 1);
+            next.push((*parent, *edge_kind));
+            next.extend_from_slice(&path);
+            queue.push_back(next);
+        }
+    }
+
+    Ok(found)
+}
+
+/// Forward edges the current `KindOptions` allow traversing, each tagged with
+/// the kind of edge it is. Shared by the node builder and the path search so
+/// both agree on exactly which edges exist — a path that included an edge
+/// scoring never followed (or vice versa) would explain a number the report
+/// didn't produce.
+fn included_edges(
+    resolve: &cargo_metadata::Resolve,
+    kinds: KindOptions,
+) -> HashMap<&PackageId, Vec<(&PackageId, NodeKind)>> {
+    let mut children: HashMap<&PackageId, Vec<(&PackageId, NodeKind)>> = HashMap::new();
+
+    for node in &resolve.nodes {
+        let mut included: Vec<(&PackageId, NodeKind)> = Vec::new();
+
+        for dep in &node.deps {
+            let dep_kind = if dep
+                .dep_kinds
+                .iter()
+                .any(|k| k.kind == DependencyKind::Normal)
+            {
+                Some(NodeKind::Normal)
+            } else if kinds.include_build
+                && dep
+                    .dep_kinds
+                    .iter()
+                    .any(|k| k.kind == DependencyKind::Build)
+            {
+                Some(NodeKind::Build)
+            } else if kinds.include_dev
+                && dep
+                    .dep_kinds
+                    .iter()
+                    .any(|k| k.kind == DependencyKind::Development)
+            {
+                Some(NodeKind::Dev)
+            } else {
+                None
+            };
+
+            let Some(dep_kind) = dep_kind else { continue };
+            included.push((&dep.pkg, dep_kind));
+        }
+
+        children.insert(&node.id, included);
+    }
+
+    children
+}
+
 /// Returns the dependency nodes and the full resolved `cargo_metadata`
 /// output — the caller needs more than just the nodes: the workspace root
 /// (where `Cargo.lock` lives, for `--format sarif`'s `locations[]`) and the
@@ -122,42 +287,7 @@ pub fn from_metadata(
     // Forward edges, each tagged with the kind of edge it is. Normal edges
     // are always followed; Build and Dev edges only when explicitly
     // requested, since neither ships with the built crate.
-    let mut children: HashMap<&PackageId, Vec<(&PackageId, NodeKind)>> = HashMap::new();
-
-    for node in &resolve.nodes {
-        let mut included: Vec<(&PackageId, NodeKind)> = Vec::new();
-
-        for dep in &node.deps {
-            let dep_kind = if dep
-                .dep_kinds
-                .iter()
-                .any(|k| k.kind == DependencyKind::Normal)
-            {
-                Some(NodeKind::Normal)
-            } else if kinds.include_build
-                && dep
-                    .dep_kinds
-                    .iter()
-                    .any(|k| k.kind == DependencyKind::Build)
-            {
-                Some(NodeKind::Build)
-            } else if kinds.include_dev
-                && dep
-                    .dep_kinds
-                    .iter()
-                    .any(|k| k.kind == DependencyKind::Development)
-            {
-                Some(NodeKind::Dev)
-            } else {
-                None
-            };
-
-            let Some(dep_kind) = dep_kind else { continue };
-            included.push((&dep.pkg, dep_kind));
-        }
-
-        children.insert(&node.id, included);
-    }
+    let children = included_edges(resolve, kinds);
 
     // BFS from all workspace roots to assign the minimum depth to every reachable package.
     // Workspace members themselves are depth 0; their immediate deps are depth 1, and so on.

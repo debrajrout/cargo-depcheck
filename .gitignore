@@ -19,3 +19,7 @@ HANDOVER.md
 *.swp
 *~
 IMPLEMENTATION_PLAN.md
+
+# Python bytecode from tools/
+__pycache__/
+*.pyc

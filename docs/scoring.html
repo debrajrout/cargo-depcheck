@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to prioritize Rust dependency upgrades — the depcheck scoring model</title>
+<meta name="description" content="Every rule behind cargo-depcheck's dependency risk score, and why it is the way it is: Cargo's compatibility rule for version lag, advisory categories without CVSS, and an absolute graph weight.">
+<link rel="canonical" href="https://debrajrout.github.io/cargo-depcheck/scoring.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="How to prioritize Rust dependency upgrades — the depcheck scoring model">
+<meta property="og:description" content="Every rule behind cargo-depcheck's dependency risk score, and why it is the way it is.">
+<meta property="og:url" content="https://debrajrout.github.io/cargo-depcheck/scoring.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "How to prioritize Rust dependency upgrades — the depcheck scoring model",
+  "description": "Every rule behind cargo-depcheck's dependency risk score, and the reasoning behind each one.",
+  "url": "https://debrajrout.github.io/cargo-depcheck/scoring.html",
+  "isPartOf": { "@type": "WebSite", "name": "cargo-depcheck", "url": "https://debrajrout.github.io/cargo-depcheck/" },
+  "about": ["Rust", "Cargo", "dependency management", "supply chain security"]
+}
+</script>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="./">cargo<span>-</span>depcheck</a>
+    <nav class="site">
+      <a href="./">Overview</a>
+      <a href="scoring.html" aria-current="page">Scoring</a>
+      <a href="vs-cargo-audit.html">Compared to other tools</a>
+      <a href="https://github.com/debrajrout/cargo-depcheck">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap hero">
+  <p class="eyebrow">Scoring reference</p>
+  <h1>How to prioritize Rust dependency upgrades</h1>
+  <p class="lede">
+    Every rule behind the score, and <em>why</em> it is the way it is — useful
+    if a ranking looks wrong to you and you want to know whether that is a bug
+    or a deliberate tradeoff.
+  </p>
+
+  <div class="formula">score = (security + version_lag + maintenance) × graph_weight</div>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Signal</th><th class="num">Max</th><th>Source</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Security</td><td class="num">50</td><td>RustSec advisories, or a yanked version</td></tr>
+        <tr><td>Version lag</td><td class="num">25</td><td>Releases behind the latest stable</td></tr>
+        <tr><td>Maintenance</td><td class="num">15</td><td>Days since the crate’s latest crates.io publish, across all versions (caps at 2 years)</td></tr>
+        <tr><td><strong>× Graph weight</strong></td><td class="num">1.0–2.0</td><td>How many crates depend on this one</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    Run <code>cargo depcheck explain &lt;crate&gt;</code> to see this
+    calculation performed on one crate in your own project, with the evidence
+    behind each term and the dependency paths that produced its graph weight.
+  </p>
+
+  <h2>Version lag follows Cargo’s compatibility rule, not raw semver arithmetic</h2>
+  <p>
+    Below 1.0, the <em>minor</em> version is the breaking axis.
+    <code>0.3.1</code> → <code>0.4.0</code> is exactly as incompatible as
+    <code>1.0.0</code> → <code>2.0.0</code>, and scores the same way. Treating
+    it as a routine “minor bump” would badly understate it, and a large share
+    of the ecosystem lives below 1.0.
+  </p>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Tier</th><th class="num">Points each</th><th class="num">Cap</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Breaking releases behind</td><td class="num">12.5</td><td class="num">25</td></tr>
+        <tr><td>Compatible releases behind</td><td class="num">2.5</td><td class="num">25</td></tr>
+        <tr><td>Patch releases behind</td><td class="num">0.5</td><td class="num">5</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    Patch lag is deliberately small but <strong>non-zero</strong>: security
+    fixes often ship as patch releases, so <code>0.10.45</code> →
+    <code>0.10.99</code> shouldn’t be invisible. The low cap keeps it from ever
+    rivalling a real breaking-version gap.
+  </p>
+
+  <h2>Advisories without a CVSS score are ranked by category</h2>
+  <p>
+    <strong>65% of RustSec advisories (789 of 1,206) carry no CVSS score at
+    all.</strong> This is the common case, not an edge case — any tool that
+    sorts purely by CVSS is blind on most of the database.
+  </p>
+  <p>
+    When CVSS is absent, severity comes from the advisory’s category. RustSec
+    doesn’t rank its own categories, so this ordering is this project’s
+    judgment of real-world impact, documented here so it can be challenged:
+  </p>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Tier</th><th>Categories</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Highest</td><td>Malicious code, arbitrary code execution</td></tr>
+        <tr><td>High</td><td>Privilege escalation, memory corruption</td></tr>
+        <tr><td>Medium</td><td>Crypto failure, injection, thread safety, file disclosure</td></tr>
+        <tr><td>Lower</td><td>Memory exposure, denial of service</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    An advisory with several categories takes the worst one. An advisory with
+    none gets a conservative Medium-equivalent default.
+  </p>
+  <p>
+    Informational advisories are tiered separately: <code>Unsound</code> (30)
+    sits above <code>Unmaintained</code> (20), because unsoundness means safe
+    code can trigger undefined behavior — a live safety defect, not just a
+    maintenance signal. A plain <code>Notice</code> scores 10.
+  </p>
+  <p>
+    <strong>Multiple advisories compound.</strong> A crate with three
+    advisories scores strictly higher than one with a single advisory of the
+    same severity, via diminishing returns: the worst counts fully, each
+    additional one at 30% of the scale before it. Still capped at the
+    50-point security ceiling.
+  </p>
+  <p>
+    A <strong>yanked</strong> version scores 40 — the High-severity tier.
+    Someone pulled that exact release from crates.io, and that is worth
+    surfacing loudly.
+  </p>
+
+  <h2>Graph weight is absolute, not relative to your project</h2>
+
+  <div class="formula">weight(n) = 1.0 + ln(1 + n) / (ln(1 + n) + 4)</div>
+
+  <p>
+    where <code>n</code> is the number of crates depending on this one,
+    directly <em>or transitively</em>. The transitive part matters: a crate
+    with only two direct dependents that both sit underneath something widely
+    used still gets credit for its true blast radius.
+  </p>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th class="num">Transitive dependents</th><th class="num">Weight</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="num">0</td><td class="num">1.00</td></tr>
+        <tr><td class="num">5</td><td class="num">1.31</td></tr>
+        <tr><td class="num">20</td><td class="num">1.43</td></tr>
+        <tr><td class="num">100</td><td class="num">1.54</td></tr>
+        <tr><td class="num">1000</td><td class="num">1.63</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The function saturates deliberately. The gap between 0 and 20 dependents
+    matters a great deal; the gap between 100 and 1000 barely matters, because
+    both are “load-bearing, fix it.”
+  </p>
+  <p>
+    <strong>Why absolute rather than relative:</strong> an earlier version
+    scaled this against your project’s single most-depended-on crate. That
+    meant the same crate in the same state could score up to 85% higher in a
+    small project than a large one, purely because of an unrelated crate
+    elsewhere in the tree — which made <code>--threshold</code> mean something
+    different in every project. It is absolute now, so a threshold you tune
+    once travels between projects.
+  </p>
+  <p>
+    Direct dependencies are bold in the human report, but directness is not an
+    extra scoring term. The ranking measures security, lag, maintenance, and
+    graph impact; it does not automatically put a direct leaf above a more
+    widely reused transitive crate.
+  </p>
+
+  <h2>Thresholds are presentation, never policy</h2>
+  <p>
+    <code>--threshold</code> and <code>--top</code> filter what is printed.
+    Summary counts and <code>--fail-on</code> evaluate the complete analyzed
+    graph, so raising a threshold cannot accidentally weaken a CI policy.
+  </p>
+  <p>
+    The maintenance timestamp describes crate-wide publishing activity, not
+    the publication date of the resolved version. This distinguishes an
+    abandoned crate from an actively maintained one even when your project is
+    pinned to an older release; version lag separately captures that pin.
+  </p>
+
+  <h2>Severity bands</h2>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Level</th><th class="num">Score</th><th>Suggested response</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>CRITICAL</strong></td><td class="num">&gt; 70</td><td>Investigate promptly</td></tr>
+        <tr><td>WARN</td><td class="num">40–70</td><td>Plan an upgrade, or document why it can wait</td></tr>
+        <tr><td>NOTICE</td><td class="num">&lt; 40</td><td>Low-priority signal; hidden by default</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    <code>notice</code> means “below the warning boundary”, not “broken”.
+    Because even a small amount of publish age produces a non-zero score, a
+    mature project may have many notices and few score-zero
+    <code>healthy</code> crates. The default report hides notices so the
+    actionable items stay short.
+  </p>
+
+  <h2>If a ranking looks wrong</h2>
+  <p>
+    That is a bug report worth filing. Run
+    <code>cargo depcheck explain &lt;crate&gt;</code> first — it shows exactly
+    which term produced the number, which usually identifies whether the
+    disagreement is about a weight, a signal, or the graph itself.
+  </p>
+  <p>
+    <a href="https://github.com/debrajrout/cargo-depcheck/issues/new/choose">Open an issue</a>
+    · <a href="https://github.com/debrajrout/cargo-depcheck/blob/main/docs/SCORING.md">This page as Markdown, in the repository</a>
+  </p>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    cargo-depcheck is dual-licensed under MIT or Apache-2.0 ·
+    <a href="https://github.com/debrajrout/cargo-depcheck">GitHub</a> ·
+    <a href="https://crates.io/crates/cargo-depcheck">crates.io</a> ·
+    <a href="./">Overview</a>
+  </div>
+</footer>
+
+</body>
+</html>
